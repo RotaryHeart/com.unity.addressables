@@ -553,7 +553,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 			{
 				if (buildInfo != null)
 				{
-					dependencyHashes = CreateRemoteCatalog(catalogFilename, jsonText, aaContext.runtimeData.CatalogLocations, aaContext.Settings, builderInput, new ProviderLoadRequestOptions() { IgnoreFailures = true });
+					dependencyHashes = CreateRemoteCatalog(Path.GetFileNameWithoutExtension(catalogFilename), jsonText, aaContext.runtimeData.CatalogLocations, aaContext.Settings, builderInput, new ProviderLoadRequestOptions() { IgnoreFailures = true });
 				}
 				else
 				{

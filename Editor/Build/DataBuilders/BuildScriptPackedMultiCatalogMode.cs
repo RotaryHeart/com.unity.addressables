@@ -94,9 +94,6 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 						BundledAssetGroupSchema addressableAssetGroupSchema = preferredCatalog.AddressableAssetGroup.GetSchema<BundledAssetGroupSchema>();
 
 						// Update the catalog path to be the respective one for this bundle
-						string loadPath = profileSettings.GetValueByName(profileId, addressableAssetGroupSchema.LoadPath.GetName(settings));
-						loadPath = profileSettings.EvaluateString(profileId, loadPath);
-						
 						string buildPath = profileSettings.GetValueByName(profileId, addressableAssetGroupSchema.BuildPath.GetName(settings));
 						buildPath = profileSettings.EvaluateString(profileId, buildPath);
 							
@@ -108,9 +105,12 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 							filePath = profileSettings.EvaluateString(profileId, filePath);
 						}
 
+						string internalId = loc.InternalId.Contains("{UnityEngine.AddressableAssets.Addressables.RuntimePath}")
+							? Path.GetFullPath(loc.InternalId.Replace("{UnityEngine.AddressableAssets.Addressables.RuntimePath}", Addressables.BuildPath))
+							: loc.InternalId;
 						preferredCatalog.BuildPath = buildPath;
 						preferredCatalog.Files.Add(filePath);
-						preferredCatalog.BuildInfo.Locations.Add(new ContentCatalogDataEntry(typeof(IAssetBundleResource), loadPath, loc.Provider, loc.Keys, loc.Dependencies, loc.Data));
+						preferredCatalog.BuildInfo.Locations.Add(new ContentCatalogDataEntry(typeof(IAssetBundleResource), internalId, loc.Provider, loc.Keys, loc.Dependencies, loc.Data));
 					}
 					else
 					{
