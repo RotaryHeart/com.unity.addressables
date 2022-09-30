@@ -19,8 +19,6 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 	{
 		#region Multi catalog section
 
-		private readonly List<CatalogSetup> m_catalogSetups = new();
-		
 		[SerializeField]
 		[Tooltip("What groups should be separated into different catalogs. Leave empty for all groups")]
 		private AddressableAssetGroup[] addressableGroups = new AddressableAssetGroup[0];
@@ -28,6 +26,10 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 		[SerializeField]
 		// [HideInInspector]
 		private List<string> builtBundles = new List<string>();
+		
+		private readonly List<CatalogSetup> m_catalogSetups = new();
+
+		public override string Name => base.Name + " - Multi-Catalog";
 
 		protected override List<ContentCatalogBuildInfo> GetContentCatalogs(AddressablesDataBuilderInput builderInput, AddressableAssetsBuildContext aaContext)
 		{
