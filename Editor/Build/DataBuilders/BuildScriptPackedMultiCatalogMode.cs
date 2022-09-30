@@ -2,6 +2,7 @@
 using System.IO;
 using System.Linq;
 using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.AddressableAssets.Initialization;
@@ -14,69 +15,100 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 	/// Build script used for player builds and running with bundles in the editor, allowing building of multiple catalogs.
 	/// </summary>
 	[CreateAssetMenu(fileName = "BuildScriptPackedMultiCatalog.asset", menuName = "Addressables/Content Builders/Multi-Catalog Build Script")]
-	public class BuildScriptPackedMultiCatalogMode : BuildScriptPackedMode, IMultipleCatalogsBuilder
+	public class BuildScriptPackedMultiCatalogMode : BuildScriptPackedMode
 	{
-		/// <summary>
-		/// Move a file, deleting it first if it exists.
-		/// </summary>
-		/// <param name="src">the file to move</param>
-		/// <param name="dst">the destination</param>
-		private static void FileMoveOverwrite(string src, string dst)
-		{
-			if (File.Exists(dst))
-			{
-				File.Delete(dst);
-			}
-			File.Move(src, dst);
-		}
+		#region Multi catalog section
 
+		private readonly List<CatalogSetup> m_catalogSetups = new();
+		
 		[SerializeField]
-		private List<ExternalCatalogSetup> externalCatalogs = new List<ExternalCatalogSetup>();
-
-		private readonly List<CatalogSetup> catalogSetups = new List<CatalogSetup>();
-
-		public override string Name
-		{
-			get => base.Name + " - Multi-Catalog";
-		}
-
-		public List<ExternalCatalogSetup> ExternalCatalogs
-		{
-			get => externalCatalogs;
-			set => externalCatalogs = value;
-		}
+		[Tooltip("What groups should be separated into different catalogs. Leave empty for all groups")]
+		private AddressableAssetGroup[] addressableGroups = new AddressableAssetGroup[0];
+		
+		[SerializeField]
+		// [HideInInspector]
+		private List<string> builtBundles = new List<string>();
 
 		protected override List<ContentCatalogBuildInfo> GetContentCatalogs(AddressablesDataBuilderInput builderInput, AddressableAssetsBuildContext aaContext)
 		{
 			// cleanup
-			catalogSetups.Clear();
-
+			m_catalogSetups.Clear();
+			builtBundles.Clear();
+			
 			// Prepare catalogs
-			var defaultCatalog = new ContentCatalogBuildInfo(ResourceManagerRuntimeData.kCatalogAddress, builderInput.RuntimeCatalogFilename);
-			foreach (ExternalCatalogSetup catalogContentGroup in externalCatalogs)
+			ContentCatalogBuildInfo defaultCatalog = null;
+			
+			if (addressableGroups.Length == 0)
 			{
-				if (catalogContentGroup != null)
+				// Iterating all the groups since no specific groups are selected
+				foreach (KeyValuePair<AddressableAssetGroup, List<string>> keyValuePair in aaContext.assetGroupToBundles)
 				{
-					catalogSetups.Add(new CatalogSetup(catalogContentGroup));
+					CatalogSetup catalog = new(keyValuePair.Key, ResourceManagerRuntimeData.kCatalogAddress);
+					m_catalogSetups.Add(catalog);
+
+					if (keyValuePair.Key.IsDefaultGroup())
+					{
+						defaultCatalog = catalog.BuildInfo;
+					}
 				}
+			}
+			else
+			{
+				//Iterate all the groups that want to be exported as separate catalogs
+				foreach (AddressableAssetGroup addressableAssetGroup in addressableGroups)
+				{
+					CatalogSetup catalog = new(addressableAssetGroup, ResourceManagerRuntimeData.kCatalogAddress);
+					m_catalogSetups.Add(catalog);
+
+					if (addressableAssetGroup.IsDefaultGroup())
+					{
+						defaultCatalog = catalog.BuildInfo;
+					}
+				}
+
+				//Be sure the default catalog is initialized this is needed since the default group might not be added to the array
+				defaultCatalog ??= new ContentCatalogBuildInfo(ResourceManagerRuntimeData.kCatalogAddress, builderInput.RuntimeCatalogFilename);
+			}
+
+			if (defaultCatalog == null)
+			{
+				Debug.LogError("Default group couldn't be found");
+				return default;
 			}
 
 			// Assign assets to new catalogs based on included groups
-			var profileSettings = aaContext.Settings.profileSettings;
-			var profileId = aaContext.Settings.activeProfileId;
-			foreach (var loc in aaContext.locations)
+			AddressableAssetProfileSettings profileSettings = aaContext.Settings.profileSettings;
+			string profileId = aaContext.Settings.activeProfileId;
+
+			foreach (ContentCatalogDataEntry loc in aaContext.locations)
 			{
-				CatalogSetup preferredCatalog = catalogSetups.FirstOrDefault(cs => cs.CatalogContentGroup.IsPartOfCatalog(loc, aaContext));
+				CatalogSetup preferredCatalog = GetCorrespondingCatalogSetup(loc, aaContext);
 				if (preferredCatalog != null)
 				{
+					// The location is an asset bundle, update the catalog data
 					if (loc.ResourceType == typeof(IAssetBundleResource))
 					{
-						string filePath = Path.GetFullPath(loc.InternalId.Replace("{UnityEngine.AddressableAssets.Addressables.RuntimePath}", Addressables.BuildPath));
-						string runtimeLoadPath = preferredCatalog.CatalogContentGroup.RuntimeLoadPath + "/" + Path.GetFileName(filePath);
-						runtimeLoadPath = profileSettings.EvaluateString(profileId, runtimeLoadPath);
+						AddressableAssetSettings settings = preferredCatalog.AddressableAssetGroup.Settings;
+						BundledAssetGroupSchema addressableAssetGroupSchema = preferredCatalog.AddressableAssetGroup.GetSchema<BundledAssetGroupSchema>();
 
+						// Update the catalog path to be the respective one for this bundle
+						string loadPath = profileSettings.GetValueByName(profileId, addressableAssetGroupSchema.LoadPath.GetName(settings));
+						loadPath = profileSettings.EvaluateString(profileId, loadPath);
+						
+						string buildPath = profileSettings.GetValueByName(profileId, addressableAssetGroupSchema.BuildPath.GetName(settings));
+						buildPath = profileSettings.EvaluateString(profileId, buildPath);
+							
+						string filePath = Path.GetFullPath(Path.Combine(buildPath, Path.GetFileName(loc.InternalId)));
+						
+						if (!File.Exists(filePath))
+						{
+							filePath = Path.GetFullPath(Path.Combine(Addressables.BuildPath + "/[BuildTarget]", Path.GetFileName(loc.InternalId)));
+							filePath = profileSettings.EvaluateString(profileId, filePath);
+						}
+
+						preferredCatalog.BuildPath = buildPath;
 						preferredCatalog.Files.Add(filePath);
-						preferredCatalog.BuildInfo.Locations.Add(new ContentCatalogDataEntry(typeof(IAssetBundleResource), runtimeLoadPath, loc.Provider, loc.Keys, loc.Dependencies, loc.Data));
+						preferredCatalog.BuildInfo.Locations.Add(new ContentCatalogDataEntry(typeof(IAssetBundleResource), loadPath, loc.Provider, loc.Keys, loc.Dependencies, loc.Data));
 					}
 					else
 					{
@@ -89,12 +121,11 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 				}
 			}
 
-
 			// Process dependencies
-			foreach (CatalogSetup additionalCatalog in catalogSetups)
+			foreach (CatalogSetup additionalCatalog in m_catalogSetups)
 			{
-				var dataEntries = new Queue<ContentCatalogDataEntry>(additionalCatalog.BuildInfo.Locations);
-				var processedEntries = new HashSet<ContentCatalogDataEntry>();
+				Queue<ContentCatalogDataEntry> dataEntries = new(additionalCatalog.BuildInfo.Locations);
+				HashSet<ContentCatalogDataEntry> processedEntries = new(dataEntries.Count);
 				while (dataEntries.Count > 0)
 				{
 					ContentCatalogDataEntry dataEntry = dataEntries.Dequeue();
@@ -103,10 +134,10 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 						continue;
 					}
 
-					foreach (var entryDependency in dataEntry.Dependencies)
+					foreach (object entryDependency in dataEntry.Dependencies)
 					{
 						// Search for the dependencies in the default catalog only.
-						var depLocation = defaultCatalog.Locations.Find(loc => loc.Keys[0] == entryDependency);
+						ContentCatalogDataEntry depLocation = defaultCatalog.Locations.Find(loc => loc.Keys[0] == entryDependency);
 						if (depLocation != null)
 						{
 							dataEntries.Enqueue(depLocation);
@@ -126,76 +157,98 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 			}
 
 			// Gather catalogs
-			var catalogs = new List<ContentCatalogBuildInfo>(catalogSetups.Count + 1);
-			catalogs.Add(defaultCatalog);
-			foreach (var setup in catalogSetups)
+			List<ContentCatalogBuildInfo> catalogs = new(m_catalogSetups.Count + 1);
+
+			if (addressableGroups.Length != 0)
 			{
-				if (!setup.Empty)
-				{
-					catalogs.Add(setup.BuildInfo);
-				}
+				catalogs.Add(defaultCatalog);
+			}
+			
+			foreach (CatalogSetup catalogSetup in m_catalogSetups.Where(catalogSetup => !catalogSetup.Empty))
+			{
+				catalogs.Add(catalogSetup.BuildInfo);
+				builtBundles.Add(Path.Combine(catalogSetup.BuildPath, catalogSetup.AddressableAssetGroup.Name));
 			}
 			return catalogs;
 		}
-
-		protected override TResult DoBuild<TResult>(AddressablesDataBuilderInput builderInput, AddressableAssetsBuildContext aaContext)
+		
+		/// <summary>
+		/// Returns the corresponding catalog setup for the location <paramref name="loc"/>
+		/// </summary>
+		/// <param name="loc">Location to get the catalog from</param>
+		/// <param name="aaContext">Addressable context</param>
+		private CatalogSetup GetCorrespondingCatalogSetup(ContentCatalogDataEntry loc, AddressableAssetsBuildContext aaContext)
 		{
-			// execute build script
-			var result = base.DoBuild<TResult>(builderInput, aaContext);
-
-			// move extra catalogs to CatalogsBuildPath
-			foreach (var setup in catalogSetups)
+			foreach (CatalogSetup catalogSetup in m_catalogSetups.Where(catalogSetup => catalogSetup.AddressableAssetGroup != null))
 			{
-				// Empty catalog setups are not added/built
-				if (setup.Empty)
+				//Special check for asset bundles
+				if (loc.ResourceType == typeof(IAssetBundleResource))
 				{
-					continue;
+					AddressableAssetEntry entry = aaContext.assetEntries.Find(ae => string.Equals(ae.BundleFileId, loc.InternalId));
+					
+					if (entry != null)
+					{
+						if (catalogSetup.AddressableAssetGroup.entries.Contains(entry))
+						{
+							return catalogSetup;
+						}
+					}
+
+					// If no entry was found, it may refer to a folder asset.
+					if (catalogSetup.AddressableAssetGroup.entries.Any(e => e.IsFolder && e.BundleFileId.Equals(loc.InternalId)))
+					{
+						return catalogSetup;
+					}
 				}
-
-				var bundlePath = aaContext.Settings.profileSettings.EvaluateString(aaContext.Settings.activeProfileId, setup.CatalogContentGroup.BuildPath);
-				Directory.CreateDirectory(bundlePath);
-
-				FileMoveOverwrite(Path.Combine(Addressables.BuildPath, setup.BuildInfo.JsonFilename), Path.Combine(bundlePath, setup.BuildInfo.JsonFilename));
-				foreach (var file in setup.Files)
+				else
 				{
-					FileMoveOverwrite(file, Path.Combine(bundlePath, Path.GetFileName(file)));
+					if (catalogSetup.AddressableAssetGroup.entries.Any(e => (e.IsFolder && e.SubAssets.Any(a => loc.Keys.Contains(a.guid))) || loc.Keys.Contains(e.guid)))
+					{
+						return catalogSetup;
+					}
 				}
 			}
 
-			return result;
+			return null;
 		}
 
 		public override void ClearCachedData()
 		{
 			base.ClearCachedData();
 
-			if ((externalCatalogs == null) || (externalCatalogs.Count == 0))
+			if (builtBundles.Count == 0)
 			{
 				return;
 			}
-
-			// Cleanup the additional catalogs
-			AddressableAssetSettings settings = AddressableAssetSettingsDefaultObject.Settings;
-			foreach (ExternalCatalogSetup additionalCatalog in externalCatalogs)
+			
+			//Deletes everything that is saved in the build bundles
+			foreach (string buildPath in builtBundles)
 			{
-				string buildPath = settings.profileSettings.EvaluateString(settings.activeProfileId, additionalCatalog.BuildPath);
-				if (!Directory.Exists(buildPath))
-				{
-					continue;
-				}
+				string directory = Path.GetFullPath(Path.GetDirectoryName(buildPath));
+				string buildPathName = Path.GetFileNameWithoutExtension(buildPath).ToLower();
 
-				foreach (string catalogFile in Directory.GetFiles(buildPath))
+				foreach (string file in Directory.GetFiles(directory))
 				{
-					File.Delete(catalogFile);
+					string fileName = Path.GetFileNameWithoutExtension(file).ToLower();
+					
+					//Need to make sure to delete everything that starts with the same name, special condition for spaces too
+					if (fileName.StartsWith(buildPathName) || fileName.StartsWith(buildPathName.Replace(" ", "")))
+					{
+						File.Delete(file);
+					}
 				}
-
-				Directory.Delete(buildPath, true);
 			}
+			
+			builtBundles.Clear();
 		}
 
+		#endregion Multi catalog section
+		
+		#region Data holders
+		
 		private class CatalogSetup
 		{
-			public readonly ExternalCatalogSetup CatalogContentGroup = null;
+			public readonly AddressableAssetGroup AddressableAssetGroup = null;
 
 			/// <summary>
 			/// The catalog build info.
@@ -205,22 +258,32 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 			/// <summary>
 			/// The files associated to the catalog.
 			/// </summary>
-			public readonly List<string> Files = new List<string>(1);
+			public readonly List<string> Files = new(1);
 
 			/// <summary>
 			/// Tells whether the catalog is empty.
 			/// </summary>
-			public bool Empty
+			public bool Empty => BuildInfo.Locations.Count == 0;
+			
+			public string BuildPath { get; set; }
+
+			public CatalogSetup(AddressableAssetGroup assetGroup, string identifier)
 			{
-				get { return BuildInfo.Locations.Count == 0; }
+				AddressableAssetGroup = assetGroup;
+				BuildInfo = new ContentCatalogBuildInfo(identifier, assetGroup.Name + ".json")
+				{
+					Register = false
+				};
 			}
 
-			public CatalogSetup(ExternalCatalogSetup buildCatalog)
+			public CatalogSetup(AddressableAssetGroup assetGroup, ContentCatalogBuildInfo buildInfo)
 			{
-				this.CatalogContentGroup = buildCatalog;
-				BuildInfo = new ContentCatalogBuildInfo(buildCatalog.CatalogName, buildCatalog.CatalogName + ".json");
+				AddressableAssetGroup = assetGroup;
+				BuildInfo = buildInfo;
 				BuildInfo.Register = false;
 			}
 		}
+		
+		#endregion Data holders
 	}
 }

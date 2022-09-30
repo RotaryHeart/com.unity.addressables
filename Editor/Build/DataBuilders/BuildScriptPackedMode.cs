@@ -553,7 +553,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 			{
 				if (buildInfo != null)
 				{
-					dependencyHashes = CreateRemoteCatalog(jsonText, aaContext.runtimeData.CatalogLocations, aaContext.Settings, builderInput, new ProviderLoadRequestOptions() { IgnoreFailures = true });
+					dependencyHashes = CreateRemoteCatalog(catalogFilename, jsonText, aaContext.runtimeData.CatalogLocations, aaContext.Settings, builderInput, new ProviderLoadRequestOptions() { IgnoreFailures = true });
 				}
 				else
 				{
@@ -1012,14 +1012,14 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 			return assetsInputDef;
 		}
 
-		static string[] CreateRemoteCatalog(string jsonText, List<ResourceLocationData> locations, AddressableAssetSettings aaSettings, AddressablesDataBuilderInput builderInput,
+		static string[] CreateRemoteCatalog(string catalogFilename, string jsonText, List<ResourceLocationData> locations, AddressableAssetSettings aaSettings, AddressablesDataBuilderInput builderInput,
 			ProviderLoadRequestOptions catalogLoadOptions)
 		{
 			string[] dependencyHashes = null;
 
 			var contentHash = HashingMethods.Calculate(jsonText).ToString();
 
-			var versionedFileName = aaSettings.profileSettings.EvaluateString(aaSettings.activeProfileId, "/catalog_" + builderInput.PlayerVersion);
+			var versionedFileName = aaSettings.profileSettings.EvaluateString(aaSettings.activeProfileId, "/" + catalogFilename + "_" + builderInput.PlayerVersion);
 			var remoteBuildFolder = aaSettings.RemoteCatalogBuildPath.GetValue(aaSettings);
 			var remoteLoadFolder = aaSettings.RemoteCatalogLoadPath.GetValue(aaSettings);
 
