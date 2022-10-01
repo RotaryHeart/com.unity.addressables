@@ -27,7 +27,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 		// [HideInInspector]
 		private List<string> builtBundles = new List<string>();
 		
-		private readonly List<CatalogSetup> m_catalogSetups = new();
+		private readonly List<CatalogSetup> m_catalogSetups = new List<CatalogSetup>();
 
 		public override string Name => base.Name + " - Multi-Catalog";
 
@@ -45,7 +45,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 				// Iterating all the groups since no specific groups are selected
 				foreach (KeyValuePair<AddressableAssetGroup, List<string>> keyValuePair in aaContext.assetGroupToBundles)
 				{
-					CatalogSetup catalog = new(keyValuePair.Key, ResourceManagerRuntimeData.kCatalogAddress);
+					CatalogSetup catalog = new CatalogSetup(keyValuePair.Key, ResourceManagerRuntimeData.kCatalogAddress);
 					m_catalogSetups.Add(catalog);
 
 					if (keyValuePair.Key.IsDefaultGroup())
@@ -59,7 +59,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 				//Iterate all the groups that want to be exported as separate catalogs
 				foreach (AddressableAssetGroup addressableAssetGroup in addressableGroups)
 				{
-					CatalogSetup catalog = new(addressableAssetGroup, ResourceManagerRuntimeData.kCatalogAddress);
+					CatalogSetup catalog = new CatalogSetup(addressableAssetGroup, ResourceManagerRuntimeData.kCatalogAddress);
 					m_catalogSetups.Add(catalog);
 
 					if (addressableAssetGroup.IsDefaultGroup())
@@ -126,8 +126,8 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 			// Process dependencies
 			foreach (CatalogSetup additionalCatalog in m_catalogSetups)
 			{
-				Queue<ContentCatalogDataEntry> dataEntries = new(additionalCatalog.BuildInfo.Locations);
-				HashSet<ContentCatalogDataEntry> processedEntries = new(dataEntries.Count);
+				Queue<ContentCatalogDataEntry> dataEntries = new Queue<ContentCatalogDataEntry>(additionalCatalog.BuildInfo.Locations);
+				HashSet<ContentCatalogDataEntry> processedEntries = new HashSet<ContentCatalogDataEntry>();
 				while (dataEntries.Count > 0)
 				{
 					ContentCatalogDataEntry dataEntry = dataEntries.Dequeue();
@@ -159,7 +159,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 			}
 
 			// Gather catalogs
-			List<ContentCatalogBuildInfo> catalogs = new(m_catalogSetups.Count + 1);
+			List<ContentCatalogBuildInfo> catalogs = new List<ContentCatalogBuildInfo>(m_catalogSetups.Count + 1);
 
 			if (addressableGroups.Length != 0)
 			{
@@ -260,7 +260,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 			/// <summary>
 			/// The files associated to the catalog.
 			/// </summary>
-			public readonly List<string> Files = new(1);
+			public readonly List<string> Files = new List<string>(1);
 
 			/// <summary>
 			/// Tells whether the catalog is empty.
