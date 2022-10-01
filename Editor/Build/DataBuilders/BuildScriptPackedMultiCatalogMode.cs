@@ -24,7 +24,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 		private AddressableAssetGroup[] addressableGroups = new AddressableAssetGroup[0];
 		
 		[SerializeField]
-		// [HideInInspector]
+		[HideInInspector]
 		private List<string> builtBundles = new List<string>();
 		
 		private readonly List<CatalogSetup> m_catalogSetups = new List<CatalogSetup>();

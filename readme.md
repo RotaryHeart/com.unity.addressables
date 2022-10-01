@@ -34,7 +34,7 @@ The solution comes in the form of performing the build process of the base game 
 
 This package is best installed using Unity's Package Manager. Fill in the URL found below in the package manager's input field for git-tracked packages:
 
-> https://github.com/juniordiscart/com.unity.addressables.git
+> https://github.com/RotaryHeart/com.unity.addressables
 
 ### Updating a vanilla installation
 
@@ -60,22 +60,10 @@ When you've already set up Addressables in your project and adjusted the setting
 
 With the multi-catalog system installed, additional catalogs can now be created and included in build:
 
-1. Create a new `ExternalCatalogSetup` object, one for each DLC package:
+1. If you add groups to the addressable groups list on your `Multi Catalog Data Buileder` then those groups will be the only ones that will be separated into catalogs.
+2. If the list is left empty all groups will be separated into unique catalogs. Which mean that each group will ne built as an independent DLC.
 
-   > Create → Addressables → new External Catalog
-
-2. In this object, fill in the following properties:
-   * Catalog name: the name of the catalog file produced during build.
-   * Build path: where this catalog and it's assets will be exported to after the build is done. This supports the same variable syntax as the build path in the Addressable Asset Settings.
-   * Runtime load path: when the game is running, where should these assets be loaded from. This should depend on how you will deploy your DLC assets on the systems of your players. It also supports the same variable syntax.
-
-   ![Set external catalog properties](Documentation~/images/multi_catalogs/SetCatalogSettings.png)
-
-3. Assign the Addressable asset groups that belong to this package.
-
-4. Now, select the `BuildScriptPackedMultiCatalogMode` data builder object and assign your external catalog object(s).
-
-   ![Assign external catalogs to data builder](Documentation~/images/multi_catalogs/AssignCatalogsToDataBuilder.png)
+   ![Multi Catalog Data Builder](Documentation~/images/multi_catalogs/MultiCatalogDataBuilder.png)
 
 ## Building
 
