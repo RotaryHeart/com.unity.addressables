@@ -65,7 +65,7 @@ namespace UnityEngine.ResourceManagement.Tests
             m_ResourceManager.AddUpdateReceiver(ur);
             m_ResourceManager.Update(0);
             Assert.IsTrue(ur.invoked);
-            m_ResourceManager.RemoveUpdateReciever(ur);
+            m_ResourceManager.RemoveUpdateReceiver(ur);
             ur.invoked = false;
             m_ResourceManager.Update(0);
             Assert.IsFalse(ur.invoked);
@@ -110,7 +110,7 @@ namespace UnityEngine.ResourceManagement.Tests
             m_ResourceManager.AddUpdateReceiver(rec);
             m_ResourceManager.StartOperation(op, default);
             op.WaitForCompletion();
-            m_ResourceManager.RemoveUpdateReciever(rec);
+            m_ResourceManager.RemoveUpdateReceiver(rec);
             Assert.AreEqual(1, op.CompletedEventTriggeredCount);
             Assert.AreEqual(1, rec.UpdateCount);
         }
@@ -125,7 +125,7 @@ namespace UnityEngine.ResourceManagement.Tests
             {
                 updateCount++;
                 if (removeSelf)
-                    rm.RemoveUpdateReciever(this);
+                    rm.RemoveUpdateReceiver(this);
             }
         }
 
@@ -160,8 +160,8 @@ namespace UnityEngine.ResourceManagement.Tests
             Assert.AreEqual(2, ur1.updateCount);
             Assert.AreEqual(1, ur2.updateCount);
             Assert.AreEqual(2, ur3.updateCount);
-            m_ResourceManager.RemoveUpdateReciever(ur1);
-            m_ResourceManager.RemoveUpdateReciever(ur3);
+            m_ResourceManager.RemoveUpdateReceiver(ur1);
+            m_ResourceManager.RemoveUpdateReceiver(ur3);
         }
 
         class IntOperation : AsyncOperationBase<int>

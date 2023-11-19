@@ -813,7 +813,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
         }
 
 #else
-        internal bool CreateCatalogFiles(string jsonText, AddressablesDataBuilderInput builderInput, AddressableAssetsBuildContext aaContext, string catalogHash, ContentCatalogBuildInfo buildInfo)
+        internal bool CreateCatalogFiles(string jsonText, AddressablesDataBuilderInput builderInput, AddressableAssetsBuildContext aaContext, string catalogHash = null, ContentCatalogBuildInfo buildInfo = null)
         {
             if (string.IsNullOrEmpty(jsonText) || builderInput == null || aaContext == null)
             {
@@ -822,8 +822,19 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             }
 
             // Path needs to be resolved at runtime.
-            string loadPath = $"{buildInfo.LoadPath}/{buildInfo.CatalogFilename}";
-            string buildPath = Path.Combine(buildInfo.BuildPath, buildInfo.CatalogFilename);
+            string loadPath;
+            string buildPath;
+
+            if (buildInfo != null)
+            {
+                loadPath = $"{buildInfo.LoadPath}/{buildInfo.CatalogFilename}";
+                buildPath = Path.Combine(buildInfo.BuildPath, buildInfo.CatalogFilename);
+            }
+            else
+            {
+                loadPath = "{UnityEngine.AddressableAssets.Addressables.RuntimePath}/" + builderInput.RuntimeCatalogFilename;
+                buildPath = Path.Combine(Addressables.BuildPath, builderInput.RuntimeCatalogFilename);
+            }
 
             if (aaContext.Settings.BundleLocalCatalog)
             {
@@ -844,32 +855,21 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             string[] dependencyHashes = null;
             if (aaContext.Settings.BuildRemoteCatalog)
             {
-                if (buildInfo != null)
-                {
-                    dependencyHashes = CreateRemoteCatalog(jsonText, aaContext.runtimeData.CatalogLocations, aaContext.Settings, builderInput, new ProviderLoadRequestOptions() { IgnoreFailures = true }, catalogHash);
-                }
-                else
-                {
-                    Addressables.LogError($"The {nameof(aaContext.Settings.BuildRemoteCatalog)} setting is currently not supported in this package.");
-                    return false;
-                }
+                dependencyHashes = CreateRemoteCatalog(jsonText, aaContext.runtimeData.CatalogLocations, aaContext.Settings, builderInput, new ProviderLoadRequestOptions() { IgnoreFailures = true }, catalogHash);
             }
 
-            if (buildInfo?.Register ?? true)
-            {
-				ResourceLocationData localCatalog = new ResourceLocationData(
-                new[] { ResourceManagerRuntimeData.kCatalogAddress },
-                    loadPath,
-                    typeof(ContentCatalogProvider),
-                    typeof(ContentCatalogData),
-                    dependencyHashes);
+			ResourceLocationData localCatalog = new ResourceLocationData(
+            new[] { ResourceManagerRuntimeData.kCatalogAddress },
+                loadPath,
+                typeof(ContentCatalogProvider),
+                typeof(ContentCatalogData),
+                dependencyHashes);
 
-				//We need to set the data here because this location data gets used later if we decide to load the remote/cached catalog instead.  See DetermineIdToLoad(...)
-				localCatalog.Data = new ProviderLoadRequestOptions() { IgnoreFailures = true };
+			//We need to set the data here because this location data gets used later if we decide to load the remote/cached catalog instead.  See DetermineIdToLoad(...)
+			localCatalog.Data = new ProviderLoadRequestOptions() { IgnoreFailures = true };
 
-				aaContext.runtimeData.CatalogLocations.Add(localCatalog);
-            }
-
+			aaContext.runtimeData.CatalogLocations.Add(localCatalog);
+            
             return true;
         }
 
