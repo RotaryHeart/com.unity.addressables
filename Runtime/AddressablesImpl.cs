@@ -62,7 +62,7 @@ namespace UnityEngine.AddressableAssets
 
         Dictionary<object, AsyncOperationHandle> m_resultToHandle = new Dictionary<object, AsyncOperationHandle>();
 		Dictionary<Scene, HashSet<AsyncOperationHandle>> m_mergedScenes = new Dictionary<Scene, HashSet<AsyncOperationHandle>>();
-		HashSet<AsyncOperationHandle> m_SceneInstances = new HashSet<AsyncOperationHandle>();
+		internal HashSet<AsyncOperationHandle> m_SceneInstances = new HashSet<AsyncOperationHandle>();
 
         AsyncOperationHandle<bool> m_ActiveCleanBundleCacheOperation;
 
