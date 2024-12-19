@@ -19,11 +19,10 @@ using UnityEngine.AddressableAssets.ResourceProviders;
 using UnityEngine.Build.Pipeline;
 using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.ResourceManagement.Util;
+using UnityEditor.AddressableAssets.BuildReportVisualizer;
+
 using static UnityEditor.AddressableAssets.Build.ContentUpdateScript;
 
-#if UNITY_2022_2_OR_NEWER
-using UnityEditor.AddressableAssets.BuildReportVisualizer;
-#endif
 
 namespace UnityEditor.AddressableAssets.Build.DataBuilders
 {
@@ -51,6 +50,60 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 
         internal List<ObjectInitializationData> ResourceProviderData => m_ResourceProviderData.ToList();
 
+        private Dictionary<string, List<ContentCatalogDataEntry>> m_PrimaryKeyToDependers = null;
+        private Dictionary<string, ContentCatalogDataEntry> m_PrimaryKeyToLocation = null;
+        private Dictionary<string, List<ContentCatalogDataEntry>> GetPrimaryKeyToDependerLocations(List<ContentCatalogDataEntry> locations)
+        {
+            if (m_PrimaryKeyToDependers != null)
+                return m_PrimaryKeyToDependers;
+            if (locations == null || locations.Count == 0)
+            {
+                Debug.LogError("Attempting to get Entries dependent on key, but currently no locations");
+                return new Dictionary<string, List<ContentCatalogDataEntry>>(0);
+            }
+
+            m_PrimaryKeyToDependers = new Dictionary<string, List<ContentCatalogDataEntry>>(locations.Count);
+            foreach (ContentCatalogDataEntry location in locations)
+            {
+                for (int i = 0; i < location.Dependencies.Count; ++i)
+                {
+                    string dependencyKey = location.Dependencies[i] as string;
+                    if (string.IsNullOrEmpty(dependencyKey))
+                        continue;
+
+                    if (!m_PrimaryKeyToDependers.TryGetValue(dependencyKey, out var dependers))
+                    {
+                        dependers = new List<ContentCatalogDataEntry>();
+                        m_PrimaryKeyToDependers.Add(dependencyKey, dependers);
+                    }
+
+                    dependers.Add(location);
+                }
+            }
+
+            return m_PrimaryKeyToDependers;
+        }
+
+        private Dictionary<string, ContentCatalogDataEntry> GetPrimaryKeyToLocation(List<ContentCatalogDataEntry> locations)
+        {
+            if (m_PrimaryKeyToLocation != null)
+                return m_PrimaryKeyToLocation;
+            if (locations == null || locations.Count == 0)
+            {
+                Debug.LogError("Attempting to get Primary key to entries dependent on key, but currently no locations");
+                return new Dictionary<string, ContentCatalogDataEntry>();
+            }
+
+            m_PrimaryKeyToLocation = new Dictionary<string, ContentCatalogDataEntry>();
+            foreach (var loc in locations)
+            {
+                if (loc != null && loc.Keys[0] != null && loc.Keys[0] is string && !m_PrimaryKeyToLocation.ContainsKey((string)loc.Keys[0]))
+                    m_PrimaryKeyToLocation[(string)loc.Keys[0]] = loc;
+            }
+
+            return m_PrimaryKeyToLocation;
+        }
+
         /// <inheritdoc />
         public override bool CanBuildData<T>()
         {
@@ -61,25 +114,14 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
         protected override TResult BuildDataImplementation<TResult>(AddressablesDataBuilderInput builderInput)
         {
 
-#if UNITY_2022_2_OR_NEWER
-            bool buildReportSettingCheck = ProjectConfigData.UserHasBeenInformedAboutBuildReportSettingPreBuild;
-            if (!buildReportSettingCheck && !Application.isBatchMode && !ProjectConfigData.GenerateBuildLayout)
-            {
-                bool turnOnBuildLayout = EditorUtility.DisplayDialog("Addressables Build Report", "There's a new Addressables Build Report you can check out after your content build.  " +
-                    "However, this requires that 'Debug Build Layout' is turned on.  The setting can be found in Edit > Preferences > Addressables.  Would you like to turn it on?", "Yes", "No");
-                if (turnOnBuildLayout)
-                    ProjectConfigData.GenerateBuildLayout = true;
-                ProjectConfigData.UserHasBeenInformedAboutBuildReportSettingPreBuild = true;
-            }
-#endif
-
+            NotifyUserAboutBuildReport();
 
             TResult result = default(TResult);
             m_IncludedGroupsInBuild?.Clear();
 
             InitializeBuildContext(builderInput, out AddressableAssetsBuildContext aaContext);
 
-            using (m_Log.ScopedStep(LogLevel.Info, "ProcessAllGroups"))
+            using (Log.ScopedStep(LogLevel.Info, "ProcessAllGroups"))
             {
                 var errorString = ProcessAllGroups(aaContext);
                 if (!string.IsNullOrEmpty(errorString))
@@ -91,30 +133,16 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 result = DoBuild<TResult>(builderInput, aaContext);
             }
 
-            if (result != null)
-            {
-                var span = DateTime.Now - aaContext.buildStartTime;
-                result.Duration = span.TotalSeconds;
-            }
+            if (result == null)
+                return result;
 
-            if (result != null && string.IsNullOrEmpty(result.Error))
+            var span = DateTime.Now - aaContext.buildStartTime;
+            result.Duration = span.TotalSeconds;
+            if (string.IsNullOrEmpty(result.Error))
             {
-                foreach (var group in m_IncludedGroupsInBuild)
-                    ContentUpdateScript.ClearContentUpdateNotifications(group);
+                ClearContentUpdateNotifications(m_IncludedGroupsInBuild);
             }
-
-            if (result != null && string.IsNullOrEmpty(result.Error))
-            {
-                foreach (var group in m_IncludedGroupsInBuild)
-                    ContentUpdateScript.ClearContentUpdateNotifications(group);
-            }
-
-#if UNITY_2022_2_OR_NEWER
-            if (result != null && !Application.isBatchMode && ProjectConfigData.AutoOpenAddressablesReport && ProjectConfigData.GenerateBuildLayout)
-            {
-                BuildReportWindow.ShowWindowAfterBuild();
-            }
-#endif
+            DisplayBuildReport();
             return result;
         }
 
@@ -139,21 +167,35 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             return list;
         }
 
+        internal const string UserHasBeenInformedAboutBuildReportSettingPreBuild = nameof(UserHasBeenInformedAboutBuildReportSettingPreBuild);
+
         private TResult CreateErrorResult<TResult>(string errorString, AddressablesDataBuilderInput builderInput, AddressableAssetsBuildContext aaContext) where TResult : IDataBuilderResult
         {
             BuildLayoutGenerationTask.GenerateErrorReport(errorString, aaContext, builderInput.PreviousContentState);
             return AddressableAssetBuildResult.CreateResult<TResult>(null, 0, errorString);
         }
 
-        internal const string UserHasBeenInformedAboutBuildReportSettingPreBuild = nameof(UserHasBeenInformedAboutBuildReportSettingPreBuild);
-
         internal void InitializeBuildContext(AddressablesDataBuilderInput builderInput, out AddressableAssetsBuildContext aaContext)
         {
             var now = DateTime.Now;
             var aaSettings = builderInput.AddressableSettings;
-
+#if ENABLE_CCD
+            // we have to populate the ccd managed data every time we build.
+            try
+            {
+                CcdBuildEvents.Instance.PopulateCcdManagedData(aaSettings, aaSettings.activeProfileId);
+            }
+            catch (Exception e)
+            {
+                Addressables.LogError("Unable to populated CCD Managed Data. You may need to refresh remote data in the profile window.");
+                throw;
+            }
+#endif
             m_AllBundleInputDefs = new List<AssetBundleBuild>();
             m_GroupToBundleNames = new Dictionary<AddressableAssetGroup, (string, string)[]>();
+            // force these caches to be rebuilt
+            m_PrimaryKeyToDependers = null;
+            m_PrimaryKeyToLocation = null;
             var bundleToAssetGroup = new Dictionary<string, string>();
             var runtimeData = new ResourceManagerRuntimeData
             {
@@ -163,13 +205,12 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 #if ENABLE_CCD
                 CcdManagedData = aaSettings.m_CcdManagedData,
 #endif
-                ProfileEvents = builderInput.ProfilerEventsEnabled,
                 LogResourceManagerExceptions = aaSettings.buildSettings.LogResourceManagerExceptions,
                 DisableCatalogUpdateOnStartup = aaSettings.DisableCatalogUpdateOnStartup,
+#if ENABLE_JSON_CATALOG
                 IsLocalCatalogInBundle = aaSettings.BundleLocalCatalog,
-#if UNITY_2019_3_OR_NEWER
-                AddressablesVersion = PackageManager.PackageInfo.FindForAssembly(typeof(Addressables).Assembly)?.version,
 #endif
+                AddressablesVersion = Addressables.Version,
                 MaxConcurrentWebRequests = aaSettings.MaxConcurrentWebRequests,
                 CatalogRequestsTimeout = aaSettings.CatalogRequestsTimeout
             };
@@ -209,24 +250,24 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             }
         }
 
-        internal static string GetBuiltInShaderBundleNamePrefix(AddressableAssetsBuildContext aaContext)
+        internal static string GetBuiltInBundleNamePrefix(AddressableAssetsBuildContext aaContext)
         {
-            return GetBuiltInShaderBundleNamePrefix(aaContext.Settings);
+            return GetBuiltInBundleNamePrefix(aaContext.Settings);
         }
 
-        internal static string GetBuiltInShaderBundleNamePrefix(AddressableAssetSettings settings)
+        internal static string GetBuiltInBundleNamePrefix(AddressableAssetSettings settings)
         {
             string value = "";
-            switch (settings.ShaderBundleNaming)
+            switch (settings.BuiltInBundleNaming)
             {
-                case ShaderBundleNaming.DefaultGroupGuid:
+                case BuiltInBundleNaming.DefaultGroupGuid:
                     value = settings.DefaultGroup.Guid;
                     break;
-                case ShaderBundleNaming.ProjectName:
+                case BuiltInBundleNaming.ProjectName:
                     value = Hash128.Compute(GetProjectName()).ToString();
                     break;
-                case ShaderBundleNaming.Custom:
-                    value = settings.ShaderBundleCustomNaming;
+                case BuiltInBundleNaming.Custom:
+                    value = settings.BuiltInBundleCustomNaming;
                     break;
             }
 
@@ -304,7 +345,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                     buildTargetGroup,
                     aaContext.Settings.buildSettings.bundleBuildPath);
 
-                var builtinShaderBundleName = GetBuiltInShaderBundleNamePrefix(aaContext) + "_unitybuiltinshaders.bundle";
+                var builtinBundleName = GetBuiltInBundleNamePrefix(aaContext) + $"{BuiltInBundleBaseName}.bundle";
 
                 var schema = aaContext.Settings.DefaultGroup.GetSchema<BundledAssetGroupSchema>();
                 AddBundleProvider(schema);
@@ -312,15 +353,15 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 string monoScriptBundleName = GetMonoScriptBundleNamePrefix(aaContext);
                 if (!string.IsNullOrEmpty(monoScriptBundleName))
                     monoScriptBundleName += "_monoscripts.bundle";
-                var buildTasks = RuntimeDataBuildTasks(builtinShaderBundleName, monoScriptBundleName);
+                var buildTasks = RuntimeDataBuildTasks(builtinBundleName, monoScriptBundleName);
                 buildTasks.Add(extractData);
 
                 IBundleBuildResults results;
-                using (m_Log.ScopedStep(LogLevel.Info, "ContentPipeline.BuildAssetBundles"))
+                using (Log.ScopedStep(LogLevel.Info, "ContentPipeline.BuildAssetBundles"))
                 using (new SBPSettingsOverwriterScope(ProjectConfigData.GenerateBuildLayout)) // build layout generation requires full SBP write results
                 {
                     var buildContent = new BundleBuildContent(m_AllBundleInputDefs);
-                    var exitCode = ContentPipeline.BuildAssetBundles(buildParams, buildContent, out results, buildTasks, aaContext, m_Log);
+                    var exitCode = ContentPipeline.BuildAssetBundles(buildParams, buildContent, out results, buildTasks, aaContext, Log);
 
                     if (exitCode < ReturnCode.Success)
                         return CreateErrorResult<TResult>("SBP Error" + exitCode, builderInput, aaContext);
@@ -329,26 +370,27 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 var groups = aaContext.Settings.groups.Where(g => g != null);
 
                 var postCatalogUpdateCallbacks = new List<Action>();
-                using (m_Log.ScopedStep(LogLevel.Info, "PostProcessBundles"))
+                using (Log.ScopedStep(LogLevel.Info, "PostProcessBundles"))
                 using (var progressTracker = new UnityEditor.Build.Pipeline.Utilities.ProgressTracker())
                 {
                     progressTracker.UpdateTask("Post Processing AssetBundles");
 
+                    AddressableAssetGroup sharedBundleGroup = aaContext.Settings.GetSharedBundleGroup();
                     foreach (var assetGroup in groups)
                     {
                         if (!aaContext.assetGroupToBundles.ContainsKey(assetGroup))
                             continue;
 
-                        using (m_Log.ScopedStep(LogLevel.Info, assetGroup.name))
+                        using (Log.ScopedStep(LogLevel.Info, assetGroup.name))
                         {
                             PostProcessBundles(assetGroup, results, addrResult,
                                 builderInput.Registry, aaContext,
-                                bundleRenameMap, postCatalogUpdateCallbacks);
+                                bundleRenameMap, postCatalogUpdateCallbacks, sharedBundleGroup);
                         }
                     }
                 }
 
-                using (m_Log.ScopedStep(LogLevel.Info, "Process Catalog Entries"))
+                using (Log.ScopedStep(LogLevel.Info, "Process Catalog Entries"))
                 {
                     Dictionary<string, ContentCatalogDataEntry> locationIdToCatalogEntryMap = BuildLocationIdToCatalogEntryMap(aaContext.locations);
                     if (builderInput.PreviousContentState != null)
@@ -373,12 +415,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                     {
                         var resultValue = r.Value;
                         m_Linker.AddTypes(resultValue.includedTypes);
-#if UNITY_2021_1_OR_NEWER
                         m_Linker.AddSerializedClass(resultValue.includedSerializeReferenceFQN);
-#else
-                        if (resultValue.GetType().GetProperty("includedSerializeReferenceFQN") != null)
-                            m_Linker.AddSerializedClass(resultValue.GetType().GetProperty("includedSerializeReferenceFQN").GetValue(resultValue) as System.Collections.Generic.IEnumerable<string>);
-#endif
                     }
                 }
             }
@@ -391,48 +428,10 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 
             var instanceProviderData = ObjectInitializationData.CreateSerializedInitializationData(instanceProviderType.Value);
             var sceneProviderData = ObjectInitializationData.CreateSerializedInitializationData(sceneProviderType.Value);
-
             var contentCatalogs = new List<ContentCatalogData>();
-#if ENABLE_BINARY_CATALOG
-            using (m_Log.ScopedStep(LogLevel.Info, "Generate Binary Catalog"))
-            {
-                foreach(var catalogInfo in GetContentCatalogs(builderInput, aaContext))
-                {
-                    var contentCatalog = new ContentCatalogData(ResourceManagerRuntimeData.kCatalogAddress);
-                    contentCatalogs.Add(contentCatalog);
 
-                    if (addrResult != null)
-                    {
-                        List<object> hashingObjects = new List<object>(addrResult.AssetBundleBuildResults.Count);
-                        for (int i = 0; i < addrResult.AssetBundleBuildResults.Count; ++i)
-                        {
-                            var hashingObject = addrResult.AssetBundleBuildResults[i];
-                            if (catalogInfo.Locations.Exists(l => (l.ResourceType == typeof(IAssetBundleResource)) && l.InternalId.Equals(hashingObject.FilePath)))
-                            {
-                                hashingObjects.Add(addrResult.AssetBundleBuildResults[i].Hash);
-                            }
-                        }
-
-                        string buildResultHash = HashingMethods.Calculate(hashingObjects.ToArray()).ToString();
-                        contentCatalog.m_BuildResultHash = buildResultHash;
-                    }
-
-                    contentCatalog.SetData(catalogInfo.Locations.OrderBy(f => f.InternalId).ToList());
-                    contentCatalog.ResourceProviderData.AddRange(resourceProviderData);
-                    contentCatalog.InstanceProviderData = instanceProviderData;
-                    contentCatalog.SceneProviderData = sceneProviderData;
-
-                    var bytes = contentCatalog.SerializeToByteArray();
-                    var contentHash = HashingMethods.Calculate(bytes).ToString();
-
-                    if (aaContext.Settings.BuildRemoteCatalog || ProjectConfigData.GenerateBuildLayout)
-                        contentCatalog.localHash = contentHash;
-
-                    CreateCatalogFiles(bytes, builderInput, aaContext, contentHash, catalogInfo);
-                }
-            }
-#else
-            using (m_Log.ScopedStep(LogLevel.Info, "Generate JSON Catalog"))
+#if ENABLE_JSON_CATALOG
+             using (Log.ScopedStep(LogLevel.Info, "Generate JSON Catalog"))
             {
                 foreach (var catalogInfo in GetContentCatalogs(builderInput, aaContext))
                 {
@@ -452,7 +451,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                         }
 
                         string buildResultHash = HashingMethods.Calculate(hashingObjects.ToArray()).ToString();
-                        contentCatalog.m_BuildResultHash = buildResultHash;
+                        contentCatalog.BuildResultHash = buildResultHash;
                     }
 
 
@@ -461,23 +460,63 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                     contentCatalog.InstanceProviderData = instanceProviderData;
                     contentCatalog.SceneProviderData = sceneProviderData;
 
-                    string jsonText = null;
                     string contentHash = null;
-                    using (m_Log.ScopedStep(LogLevel.Info, "Generating Json"))
+                    string jsonText = null;
+                    using (Log.ScopedStep(LogLevel.Info, "Generating Json"))
                         jsonText = JsonUtility.ToJson(contentCatalog);
 
                     if (aaContext.Settings.BuildRemoteCatalog || ProjectConfigData.GenerateBuildLayout)
                     {
-                        using (m_Log.ScopedStep(LogLevel.Info, "Hashing Catalog"))
+                        using (Log.ScopedStep(LogLevel.Info, "Hashing Catalog"))
                             contentHash = HashingMethods.Calculate(jsonText).ToString();
+                        contentCatalog.LocalHash = contentHash;
                     }
 
                     CreateCatalogFiles(jsonText, builderInput, aaContext, contentHash, catalogInfo);
                 }
             }
+#else
+            using (Log.ScopedStep(LogLevel.Info, "Generate Binary Catalog"))
+            {
+                foreach (var catalogInfo in GetContentCatalogs(builderInput, aaContext))
+                {
+                    var contentCatalog = new ContentCatalogData(catalogInfo.Identifier);
+                    contentCatalogs.Add(contentCatalog);
+
+                    if (addrResult != null)
+                    {
+                        List<object> hashingObjects = new List<object>(addrResult.AssetBundleBuildResults.Count);
+                        for (int i = 0; i < addrResult.AssetBundleBuildResults.Count; ++i)
+                        {
+                            var hashingObject = addrResult.AssetBundleBuildResults[i];
+                            if (catalogInfo.Locations.Exists(l => (l.ResourceType == typeof(IAssetBundleResource)) && l.InternalId.Equals(hashingObject.FilePath)))
+                            {
+                                hashingObjects.Add(addrResult.AssetBundleBuildResults[i].Hash);
+                            }
+                        }
+
+                        string buildResultHash = HashingMethods.Calculate(hashingObjects.ToArray()).ToString();
+                        contentCatalog.BuildResultHash = buildResultHash;
+                    }
+
+                    contentCatalog.SetData(catalogInfo.Locations.OrderBy(f => f.InternalId).ToList());
+                    contentCatalog.ResourceProviderData.AddRange(resourceProviderData);
+                    contentCatalog.InstanceProviderData = instanceProviderData;
+                    contentCatalog.SceneProviderData = sceneProviderData;
+
+                    var bytes = contentCatalog.SerializeToByteArray();
+                    var contentHash = HashingMethods.Calculate(bytes).ToString();
+
+                    if (aaContext.Settings.BuildRemoteCatalog || ProjectConfigData.GenerateBuildLayout)
+                        contentCatalog.LocalHash = contentHash.ToString();
+
+                    CreateCatalogFiles(bytes, builderInput, aaContext, contentHash, catalogInfo);
+                }
+            }
 #endif
 
-            using (m_Log.ScopedStep(LogLevel.Info, "Generate link"))
+
+            using (Log.ScopedStep(LogLevel.Info, "Generate link"))
             {
                 foreach (var pd in resourceProviderData)
                 {
@@ -509,24 +548,24 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 
             var settingsPath = Addressables.BuildPath + "/" + builderInput.RuntimeSettingsFilename;
 
-            using (m_Log.ScopedStep(LogLevel.Info, "Generate Settings"))
+            using (Log.ScopedStep(LogLevel.Info, "Generate Settings"))
                 WriteFile(settingsPath, JsonUtility.ToJson(aaContext.runtimeData), builderInput.Registry);
 
             if (extractData.BuildCache != null && builderInput.PreviousContentState == null)
             {
-                using (m_Log.ScopedStep(LogLevel.Info, "Generate Content Update State"))
+                using (Log.ScopedStep(LogLevel.Info, "Generate Content Update State"))
                 {
                     var remoteCatalogLoadPath = aaContext.Settings.BuildRemoteCatalog
                         ? aaContext.Settings.RemoteCatalogLoadPath.GetValue(aaContext.Settings)
                         : string.Empty;
 
                     var allEntries = new List<AddressableAssetEntry>();
-                    using (m_Log.ScopedStep(LogLevel.Info, "Get Assets"))
-                        aaContext.Settings.GetAllAssets(allEntries, false, ContentUpdateScript.GroupFilter);
+                    using (Log.ScopedStep(LogLevel.Info, "Get Assets"))
+                        aaContext.Settings.GetAllAssets(allEntries, false, ContentUpdateScript.GroupFilterFunc);
 
                     if (ContentUpdateScript.SaveContentState(aaContext.locations, aaContext.GuidToCatalogLocation, tempPath, allEntries,
-                            extractData.DependencyData, playerBuildVersion, remoteCatalogLoadPath,
-                            carryOverCachedState))
+                        extractData.DependencyData, playerBuildVersion, remoteCatalogLoadPath,
+                        carryOverCachedState))
                     {
                         string contentStatePath = ContentUpdateScript.GetContentStateDataPath(false, aaContext.Settings);
                         if (ResourceManagerConfig.ShouldPathUseWebRequest(contentStatePath))
@@ -538,31 +577,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 #endif
                         }
 
-                        try
-                        {
-                            string directory = Path.GetDirectoryName(contentStatePath);
-                            if (!Directory.Exists(directory))
-                                Directory.CreateDirectory(directory);
-                            if (File.Exists(contentStatePath))
-                                File.Delete(contentStatePath);
-
-                            File.Copy(tempPath, contentStatePath, true);
-                            if (addrResult != null)
-                                addrResult.ContentStateFilePath = contentStatePath;
-                            builderInput.Registry.AddFile(contentStatePath);
-                        }
-                        catch (UnauthorizedAccessException uae)
-                        {
-                            if (!AddressableAssetUtility.IsVCAssetOpenForEdit(contentStatePath))
-                                Debug.LogErrorFormat("Cannot access the file {0}. It may be locked by version control.",
-                                    contentStatePath);
-                            else
-                                Debug.LogException(uae);
-                        }
-                        catch (Exception e)
-                        {
-                            Debug.LogException(e);
-                        }
+                        CopyAndRegisterContentState(tempPath, contentStatePath, builderInput, addrResult);
                     }
                 }
             }
@@ -578,18 +593,15 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 using (var progressTracker = new UnityEditor.Build.Pipeline.Utilities.ProgressTracker())
                 {
                     progressTracker.UpdateTask("Generating Build Layout");
-                    using (m_Log.ScopedStep(LogLevel.Info, "Generate Build Layout"))
+                    using (Log.ScopedStep(LogLevel.Info, "Generate Build Layout"))
                     {
                         foreach (var contentCatalog in contentCatalogs)
                         {
                             List<IBuildTask> tasks = new List<IBuildTask>();
                             var buildLayoutTask = new BuildLayoutGenerationTask();
-                            buildLayoutTask.m_BundleNameRemap = bundleRenameMap;
-                            buildLayoutTask.m_ContentCatalogData = contentCatalog;
-                            if (contentUpdateContext.ContentState != null)
-                                buildLayoutTask.m_AddressablesInput = builderInput;
+                            extractData.BuildContext.SetContextObject<IBuildLayoutParameters>(new BuildLayoutParameters(bundleRenameMap, contentCatalog));
                             tasks.Add(buildLayoutTask);
-                            BuildTasksRunner.Run(tasks, extractData.m_BuildContext);
+                            BuildTasksRunner.Run(tasks, extractData.BuildContext);
                         }
                     }
                 }
@@ -637,7 +649,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             return addressableEntryToCachedStateMap;
         }
 
-#if ENABLE_BINARY_CATALOG
+#if !ENABLE_JSON_CATALOG
         internal bool CreateCatalogFiles(byte[] data, AddressablesDataBuilderInput builderInput, AddressableAssetsBuildContext aaContext, string catalogHash, ContentCatalogBuildInfo buildInfo)
         {
             if (data == null || data.Length == 0 || builderInput == null || aaContext == null)
@@ -650,21 +662,8 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             string loadPath = $"{buildInfo.LoadPath}/{buildInfo.CatalogFilename}";
             string buildPath = Path.Combine(buildInfo.BuildPath, buildInfo.CatalogFilename);
 
-            if (aaContext.Settings.BundleLocalCatalog)
-            {
-                loadPath = loadPath.Replace(".bin", ".bundle");
-                buildPath = buildPath.Replace(".bin", ".bundle");
-                var returnCode = CreateCatalogBundle(buildPath, data, builderInput);
-                if (returnCode != ReturnCode.Success || !File.Exists(buildPath))
-                {
-                    Addressables.LogError($"An error occurred during the creation of the content catalog bundle (return code {returnCode}).");
-                    return false;
-                }
-            }
-            else
-            {
-                WriteFile(buildPath, data, builderInput.Registry);
-            }
+            WriteFile(buildPath, data, builderInput.Registry);
+            WriteFile(buildPath.Replace(".bin", ".hash"), HashingMethods.Calculate(data).ToString(), builderInput.Registry);
 
             string[] dependencyHashes = null;
             if (aaContext.Settings.BuildRemoteCatalog)
@@ -680,12 +679,15 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 }
             }
 
-            aaContext.runtimeData.CatalogLocations.Add(new ResourceLocationData(
-                new[] { ResourceManagerRuntimeData.kCatalogAddress },
-                loadPath,
-                typeof(ContentCatalogProvider),
-                typeof(ContentCatalogData),
-                dependencyHashes));
+            if (buildInfo?.Register ?? true)
+            {
+                aaContext.runtimeData.CatalogLocations.Add(new ResourceLocationData(
+                    new[] { buildInfo?.Identifier ?? ResourceManagerRuntimeData.kCatalogAddress },
+                    loadPath,
+                    typeof(ContentCatalogProvider),
+                    typeof(ContentCatalogData),
+                    dependencyHashes));
+            }
 
             return true;
         }
@@ -719,6 +721,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 dependencyHashes = new string[((int)ContentCatalogProvider.DependencyHashIndex.Count)];
                 dependencyHashes[(int)ContentCatalogProvider.DependencyHashIndex.Remote] = ResourceManagerRuntimeData.kCatalogAddress + "RemoteHash";
                 dependencyHashes[(int)ContentCatalogProvider.DependencyHashIndex.Cache] = ResourceManagerRuntimeData.kCatalogAddress + "CacheHash";
+                dependencyHashes[(int)ContentCatalogProvider.DependencyHashIndex.Local] = ResourceManagerRuntimeData.kCatalogAddress + "LocalHash";
 
                 var remoteHashLoadPath = remoteLoadFolder + versionedFileName + ".hash";
                 var remoteHashLoadLocation = new ResourceLocationData(
@@ -739,6 +742,13 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                     typeof(TextDataProvider), typeof(string));
                 cacheLoadLocation.Data = catalogLoadOptions.Copy();
                 locations.Add(cacheLoadLocation);
+
+                var localCatalogLoadPath = "{UnityEngine.AddressableAssets.Addressables.RuntimePath}/catalog.hash";
+                var localLoadLocation = new ResourceLocationData(
+                    new[] { dependencyHashes[(int)ContentCatalogProvider.DependencyHashIndex.Local] },
+                    localCatalogLoadPath,
+                    typeof(TextDataProvider), typeof(string));
+                locations.Add(localLoadLocation);
             }
 
             return dependencyHashes;
@@ -762,7 +772,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             var tempFilePath = Path.Combine(tempFolderPath, Path.GetFileName(filepath).Replace(".bundle", ".bin"));
             if (!WriteFile(tempFilePath, data, builderInput.Registry))
             {
-                throw new Exception("An error occurred during the creation of temporary files needed to bundle the content catalog.");
+                throw new Exception("An error occured during the creation of temporary files needed to bundle the content catalog.");
             }
 
             AssetDatabase.Refresh();
@@ -789,7 +799,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             var buildParams = new BundleBuildParameters(builderInput.Target, builderInput.TargetGroup, Path.GetDirectoryName(filepath));
             if (builderInput.Target == BuildTarget.WebGL)
                 buildParams.BundleCompression = BuildCompression.LZ4Runtime;
-            var retCode = ContentPipeline.BuildAssetBundles(buildParams, bundleBuildContent, out IBundleBuildResults result, buildTasks, m_Log);
+            var retCode = ContentPipeline.BuildAssetBundles(buildParams, bundleBuildContent, out IBundleBuildResults result, buildTasks, Log);
 
             if (Directory.Exists(tempFolderPath))
             {
@@ -832,13 +842,14 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 var returnCode = CreateCatalogBundle(buildPath, jsonText, builderInput);
                 if (returnCode != ReturnCode.Success || !File.Exists(buildPath))
                 {
-                    Addressables.LogError($"An error occurred during the creation of the content catalog bundle (return code {returnCode}).");
+                    Addressables.LogError($"An error occured during the creation of the content catalog bundle (return code {returnCode}).");
                     return false;
                 }
             }
             else
             {
                 WriteFile(buildPath, jsonText, builderInput.Registry);
+                WriteFile(buildPath.Replace(".json", ".hash"), HashingMethods.Calculate(jsonText).ToString(), builderInput.Registry);
             }
 
             string[] dependencyHashes = null;
@@ -857,17 +868,17 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
 
             if (buildInfo?.Register ?? true)
             {
-				ResourceLocationData localCatalog = new ResourceLocationData(
-                new[] { ResourceManagerRuntimeData.kCatalogAddress },
+                ResourceLocationData localCatalog = new ResourceLocationData(
+                    new[] { buildInfo?.Identifier ?? ResourceManagerRuntimeData.kCatalogAddress },
                     loadPath,
                     typeof(ContentCatalogProvider),
                     typeof(ContentCatalogData),
                     dependencyHashes);
 
-				//We need to set the data here because this location data gets used later if we decide to load the remote/cached catalog instead.  See DetermineIdToLoad(...)
-				localCatalog.Data = new ProviderLoadRequestOptions() { IgnoreFailures = true };
+                //We need to set the data here because this location data gets used later if we decide to load the remote/cached catalog instead.  See DetermineIdToLoad(...)
+                localCatalog.Data = new ProviderLoadRequestOptions() { IgnoreFailures = true };
 
-				aaContext.runtimeData.CatalogLocations.Add(localCatalog);
+                aaContext.runtimeData.CatalogLocations.Add(localCatalog);
             }
 
             return true;
@@ -891,7 +902,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             var tempFilePath = Path.Combine(tempFolderPath, Path.GetFileName(filepath).Replace(".bundle", ".json"));
             if (!WriteFile(tempFilePath, jsonText, builderInput.Registry))
             {
-                throw new Exception("An error occurred during the creation of temporary files needed to bundle the content catalog.");
+                throw new Exception("An error occured during the creation of temporary files needed to bundle the content catalog.");
             }
 
             AssetDatabase.Refresh();
@@ -918,7 +929,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             var buildParams = new BundleBuildParameters(builderInput.Target, builderInput.TargetGroup, Path.GetDirectoryName(filepath));
             if (builderInput.Target == BuildTarget.WebGL)
                 buildParams.BundleCompression = BuildCompression.LZ4Runtime;
-            var retCode = ContentPipeline.BuildAssetBundles(buildParams, bundleBuildContent, out IBundleBuildResults result, buildTasks, m_Log);
+            var retCode = ContentPipeline.BuildAssetBundles(buildParams, bundleBuildContent, out IBundleBuildResults result, buildTasks, Log);
 
             if (Directory.Exists(tempFolderPath))
             {
@@ -941,7 +952,8 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             return retCode;
         }
 
-        static string[] CreateRemoteCatalog(string jsonText, List<ResourceLocationData> locations, AddressableAssetSettings aaSettings, AddressablesDataBuilderInput builderInput, ProviderLoadRequestOptions catalogLoadOptions, string contentHash)
+        static string[] CreateRemoteCatalog(string jsonText, List<ResourceLocationData> locations, AddressableAssetSettings aaSettings, AddressablesDataBuilderInput builderInput,
+            ProviderLoadRequestOptions catalogLoadOptions, string contentHash)
         {
             string[] dependencyHashes = null;
 
@@ -972,6 +984,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 dependencyHashes = new string[((int)ContentCatalogProvider.DependencyHashIndex.Count)];
                 dependencyHashes[(int)ContentCatalogProvider.DependencyHashIndex.Remote] = ResourceManagerRuntimeData.kCatalogAddress + "RemoteHash";
                 dependencyHashes[(int)ContentCatalogProvider.DependencyHashIndex.Cache] = ResourceManagerRuntimeData.kCatalogAddress + "CacheHash";
+                dependencyHashes[(int)ContentCatalogProvider.DependencyHashIndex.Local] = ResourceManagerRuntimeData.kCatalogAddress + "LocalHash";
 
                 var remoteHashLoadPath = remoteLoadFolder + versionedFileName + ".hash";
                 var remoteHashLoadLocation = new ResourceLocationData(
@@ -992,10 +1005,18 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                     typeof(TextDataProvider), typeof(string));
                 cacheLoadLocation.Data = catalogLoadOptions.Copy();
                 locations.Add(cacheLoadLocation);
+
+                var localCatalogLoadPath = "{UnityEngine.AddressableAssets.Addressables.RuntimePath}/catalog.hash";
+                var localLoadLocation = new ResourceLocationData(
+                    new[] { dependencyHashes[(int)ContentCatalogProvider.DependencyHashIndex.Local] },
+                    localCatalogLoadPath,
+                    typeof(TextDataProvider), typeof(string));
+                locations.Add(localLoadLocation);
             }
 
             return dependencyHashes;
         }
+
 #endif
 
         internal static string GetProjectName()
@@ -1003,7 +1024,8 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             return new DirectoryInfo(Path.GetDirectoryName(Application.dataPath)).Name;
         }
 
-        internal static void SetAssetEntriesBundleFileIdToCatalogEntryBundleFileId(ICollection<AddressableAssetEntry> assetEntries, Dictionary<string, string> bundleNameToInternalBundleIdMap, IBundleWriteData writeData, Dictionary<string, ContentCatalogDataEntry> locationIdToCatalogEntryMap)
+        internal static void SetAssetEntriesBundleFileIdToCatalogEntryBundleFileId(ICollection<AddressableAssetEntry> assetEntries, Dictionary<string, string> bundleNameToInternalBundleIdMap,
+            IBundleWriteData writeData, Dictionary<string, ContentCatalogDataEntry> locationIdToCatalogEntryMap)
         {
             foreach (var loc in assetEntries)
             {
@@ -1079,29 +1101,9 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
         /// <returns></returns>
         protected virtual string ProcessGroupSchema(AddressableAssetGroupSchema schema, AddressableAssetGroup assetGroup, AddressableAssetsBuildContext aaContext)
         {
-            var playerDataSchema = schema as PlayerDataGroupSchema;
-            if (playerDataSchema != null)
-                return ProcessPlayerDataSchema(playerDataSchema, assetGroup, aaContext);
             var bundledAssetSchema = schema as BundledAssetGroupSchema;
             if (bundledAssetSchema != null)
                 return ProcessBundledAssetSchema(bundledAssetSchema, assetGroup, aaContext);
-            return string.Empty;
-        }
-
-        internal string ProcessPlayerDataSchema(
-            PlayerDataGroupSchema schema,
-            AddressableAssetGroup assetGroup,
-            AddressableAssetsBuildContext aaContext)
-        {
-            if (CreateLocationsForPlayerData(schema, assetGroup, aaContext.locations, aaContext.providerTypes))
-            {
-                if (!m_CreatedProviderIds.Contains(typeof(LegacyResourcesProvider).Name))
-                {
-                    m_CreatedProviderIds.Add(typeof(LegacyResourcesProvider).Name);
-                    m_ResourceProviderData.Add(ObjectInitializationData.CreateSerializedInitializationData(typeof(LegacyResourcesProvider)));
-                }
-            }
-
             return string.Empty;
         }
 
@@ -1125,10 +1127,6 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             if (schema == null || !schema.IncludeInBuild || !assetGroup.entries.Any())
                 return string.Empty;
 
-            var errorStr = ErrorCheckBundleSettings(schema, assetGroup, aaContext.Settings);
-            if (!string.IsNullOrEmpty(errorStr))
-                return errorStr;
-
             m_IncludedGroupsInBuild?.Add(assetGroup);
 
             AddBundleProvider(schema);
@@ -1142,11 +1140,17 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 m_ResourceProviderData.Add(assetProviderData);
             }
 
-#if UNITY_2022_1_OR_NEWER
+            string buildPath = schema.BuildPath.GetValue(aaContext.Settings);
+            if (buildPath == AddressableAssetProfileSettings.undefinedEntryValue)
+                return ($"Addressable group {assetGroup.Name} build path is set to undefined. Change the path to build content.");
+
             string loadPath = schema.LoadPath.GetValue(aaContext.Settings);
+            if (loadPath == AddressableAssetProfileSettings.undefinedEntryValue)
+                Addressables.LogWarning($"Addressable group {assetGroup.Name} load path is set to undefined. Change the path to load content.");
+
             if (loadPath.StartsWith("http://", StringComparison.Ordinal) && PlayerSettings.insecureHttpOption == InsecureHttpOption.NotAllowed)
-                Addressables.LogWarning($"Addressable group {assetGroup.Name} uses insecure http for its load path. To allow http connections for UnityWebRequests, change your settings in Edit > Project Settings > Player > Other Settings > Configuration > Allow downloads over HTTP.");
-#endif
+                Addressables.LogWarning($"Addressable group {assetGroup.Name} uses insecure http for its load path.  To allow http connections for UnityWebRequests, change your settings in Edit > Project Settings > Player > Other Settings > Configuration > Allow downloads over HTTP.");
+
             if (schema.Compression == BundledAssetGroupSchema.BundleCompressionMode.LZMA && aaContext.runtimeData.BuildTarget == BuildTarget.WebGL.ToString())
                 Addressables.LogWarning($"Addressable group {assetGroup.Name} uses LZMA compression, which cannot be decompressed on WebGL. Use LZ4 compression instead.");
 
@@ -1154,7 +1158,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             var list = PrepGroupBundlePacking(assetGroup, bundleInputDefs, schema);
             aaContext.assetEntries.AddRange(list);
             List<string> uniqueNames = HandleBundleNames(bundleInputDefs, aaContext.bundleToAssetGroup, assetGroup.Guid);
-            (string, string)[] groupBundles = new (string, string)[uniqueNames.Count];
+            (string, string)[] groupBundles = new(string, string)[uniqueNames.Count];
             for (int i = 0; i < uniqueNames.Count; ++i)
                 groupBundles[i] = (bundleInputDefs[i].assetBundleName, uniqueNames[i]);
             m_GroupToBundleNames.Add(assetGroup, groupBundles);
@@ -1194,50 +1198,6 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             return generatedUniqueNames;
         }
 
-        internal static string ErrorCheckBundleSettings(BundledAssetGroupSchema schema, AddressableAssetGroup assetGroup, AddressableAssetSettings settings)
-        {
-            var message = string.Empty;
-
-            string buildPath = settings.profileSettings.GetValueById(settings.activeProfileId, schema.BuildPath.Id);
-            string loadPath = settings.profileSettings.GetValueById(settings.activeProfileId, schema.LoadPath.Id);
-
-            if (string.IsNullOrEmpty(buildPath))
-            {
-                buildPath = schema.BuildPath.Id;
-            }
-
-            if (string.IsNullOrEmpty(loadPath))
-            {
-                loadPath = schema.LoadPath.Id;
-            }
-
-            bool buildLocal = AddressableAssetUtility.StringContains(buildPath, "[UnityEngine.AddressableAssets.Addressables.BuildPath]", StringComparison.Ordinal);
-            bool loadLocal = AddressableAssetUtility.StringContains(loadPath, "{UnityEngine.AddressableAssets.Addressables.RuntimePath}", StringComparison.Ordinal);
-
-            if (buildLocal && !loadLocal)
-            {
-                message = "BuildPath for group '" + assetGroup.Name + "' is set to the dynamic-lookup version of StreamingAssets, but LoadPath is not. \n";
-            }
-            else if (!buildLocal && loadLocal)
-            {
-                message = "LoadPath for group " + assetGroup.Name +
-                          " is set to the dynamic-lookup version of StreamingAssets, but BuildPath is not. These paths must both use the dynamic-lookup, or both not use it. \n";
-            }
-
-            if (!string.IsNullOrEmpty(message))
-            {
-                message += "BuildPath: '" + buildPath + "'\n";
-                message += "LoadPath: '" + loadPath + "'";
-            }
-
-            if (schema.Compression == BundledAssetGroupSchema.BundleCompressionMode.LZMA && (buildLocal || loadLocal))
-            {
-                Debug.LogWarningFormat("Bundle compression is set to LZMA, but group {0} uses local content.", assetGroup.Name);
-            }
-
-            return message;
-        }
-
         internal static string CalculateGroupHash(BundledAssetGroupSchema.BundleInternalIdMode mode, AddressableAssetGroup assetGroup, IEnumerable<AddressableAssetEntry> entries)
         {
             switch (mode)
@@ -1270,9 +1230,53 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             switch (packingMode)
             {
                 case BundledAssetGroupSchema.BundlePackingMode.PackTogether:
+                {
+                    var allEntries = new List<AddressableAssetEntry>();
+                    foreach (AddressableAssetEntry a in assetGroup.entries)
+                    {
+                        if (entryFilter != null && !entryFilter(a))
+                            continue;
+                        a.GatherAllAssets(allEntries, true, true, false, entryFilter);
+                    }
+
+                    combinedEntries.AddRange(allEntries);
+                    GenerateBuildInputDefinitions(allEntries, bundleInputDefs, CalculateGroupHash(namingMode, assetGroup, allEntries), "all", ignoreUnsupportedFilesInBuild);
+                }
+                break;
+                case BundledAssetGroupSchema.BundlePackingMode.PackSeparately:
+                {
+                    foreach (AddressableAssetEntry a in assetGroup.entries)
+                    {
+                        if (entryFilter != null && !entryFilter(a))
+                            continue;
+                        var allEntries = new List<AddressableAssetEntry>();
+                        a.GatherAllAssets(allEntries, true, true, false, entryFilter);
+                        combinedEntries.AddRange(allEntries);
+                        GenerateBuildInputDefinitions(allEntries, bundleInputDefs, CalculateGroupHash(namingMode, assetGroup, allEntries), a.address, ignoreUnsupportedFilesInBuild);
+                    }
+                }
+                break;
+                case BundledAssetGroupSchema.BundlePackingMode.PackTogetherByLabel:
+                {
+                    var labelTable = new Dictionary<string, List<AddressableAssetEntry>>();
+                    foreach (AddressableAssetEntry a in assetGroup.entries)
+                    {
+                        if (entryFilter != null && !entryFilter(a))
+                            continue;
+                        var sb = new StringBuilder();
+                        foreach (var l in a.labels)
+                            sb.Append(l);
+                        var key = sb.ToString();
+                        List<AddressableAssetEntry> entries;
+                        if (!labelTable.TryGetValue(key, out entries))
+                            labelTable.Add(key, entries = new List<AddressableAssetEntry>());
+                        entries.Add(a);
+                    }
+
+                    foreach (var entryGroup in labelTable)
                     {
                         var allEntries = new List<AddressableAssetEntry>();
-                        foreach (AddressableAssetEntry a in assetGroup.entries)
+                        foreach (var a in entryGroup.Value)
                         {
                             if (entryFilter != null && !entryFilter(a))
                                 continue;
@@ -1280,54 +1284,10 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                         }
 
                         combinedEntries.AddRange(allEntries);
-                        GenerateBuildInputDefinitions(allEntries, bundleInputDefs, CalculateGroupHash(namingMode, assetGroup, allEntries), "all", ignoreUnsupportedFilesInBuild);
+                        GenerateBuildInputDefinitions(allEntries, bundleInputDefs, CalculateGroupHash(namingMode, assetGroup, allEntries), entryGroup.Key, ignoreUnsupportedFilesInBuild);
                     }
-                    break;
-                case BundledAssetGroupSchema.BundlePackingMode.PackSeparately:
-                    {
-                        foreach (AddressableAssetEntry a in assetGroup.entries)
-                        {
-                            if (entryFilter != null && !entryFilter(a))
-                                continue;
-                            var allEntries = new List<AddressableAssetEntry>();
-                            a.GatherAllAssets(allEntries, true, true, false, entryFilter);
-                            combinedEntries.AddRange(allEntries);
-                            GenerateBuildInputDefinitions(allEntries, bundleInputDefs, CalculateGroupHash(namingMode, assetGroup, allEntries), a.address, ignoreUnsupportedFilesInBuild);
-                        }
-                    }
-                    break;
-                case BundledAssetGroupSchema.BundlePackingMode.PackTogetherByLabel:
-                    {
-                        var labelTable = new Dictionary<string, List<AddressableAssetEntry>>();
-                        foreach (AddressableAssetEntry a in assetGroup.entries)
-                        {
-                            if (entryFilter != null && !entryFilter(a))
-                                continue;
-                            var sb = new StringBuilder();
-                            foreach (var l in a.labels)
-                                sb.Append(l);
-                            var key = sb.ToString();
-                            List<AddressableAssetEntry> entries;
-                            if (!labelTable.TryGetValue(key, out entries))
-                                labelTable.Add(key, entries = new List<AddressableAssetEntry>());
-                            entries.Add(a);
-                        }
-
-                        foreach (var entryGroup in labelTable)
-                        {
-                            var allEntries = new List<AddressableAssetEntry>();
-                            foreach (var a in entryGroup.Value)
-                            {
-                                if (entryFilter != null && !entryFilter(a))
-                                    continue;
-                                a.GatherAllAssets(allEntries, true, true, false, entryFilter);
-                            }
-
-                            combinedEntries.AddRange(allEntries);
-                            GenerateBuildInputDefinitions(allEntries, bundleInputDefs, CalculateGroupHash(namingMode, assetGroup, allEntries), entryGroup.Key, ignoreUnsupportedFilesInBuild);
-                        }
-                    }
-                    break;
+                }
+                break;
                 default:
                     throw new Exception("Unknown Packing Mode");
             }
@@ -1380,12 +1340,11 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             return assetsInputDef;
         }
 
-
         // Tests can set this flag to prevent player script compilation. This is the most expensive part of small builds
         // and isn't needed for most tests.
         internal static bool s_SkipCompilePlayerScripts = false;
 
-        static IList<IBuildTask> RuntimeDataBuildTasks(string builtinShaderBundleName, string monoScriptBundleName)
+        static IList<IBuildTask> RuntimeDataBuildTasks(string builtinBundleName, string monoScriptBundleName)
         {
             var buildTasks = new List<IBuildTask>();
 
@@ -1403,7 +1362,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             buildTasks.Add(new CalculateAssetDependencyData());
             buildTasks.Add(new AddHashToBundleNameTask());
             buildTasks.Add(new StripUnusedSpriteSources());
-            buildTasks.Add(new CreateBuiltInShadersBundle(builtinShaderBundleName));
+            buildTasks.Add(new CreateBuiltInBundle(builtinBundleName));
             if (!string.IsNullOrEmpty(monoScriptBundleName))
                 buildTasks.Add(new CreateMonoScriptBundle(monoScriptBundleName));
             buildTasks.Add(new PostDependencyCallback());
@@ -1448,7 +1407,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
         }
 
         void PostProcessBundles(AddressableAssetGroup assetGroup, IBundleBuildResults buildResult, AddressablesPlayerBuildResult addrResult, FileRegistry registry,
-            AddressableAssetsBuildContext aaContext, Dictionary<string, string> bundleRenameMap, List<Action> postCatalogUpdateCallbacks)
+            AddressableAssetsBuildContext aaContext, Dictionary<string, string> bundleRenameMap, List<Action> postCatalogUpdateCallbacks, AddressableAssetGroup sharedBundleGroup)
         {
             var schema = assetGroup.GetSchema<BundledAssetGroupSchema>();
             if (schema == null)
@@ -1471,7 +1430,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 for (int i = 0; i < builtBundleNames.Count; ++i)
                 {
                     string outputName = null;
-                    foreach ((string, string) bundleValue in bundleValues)
+                    foreach ((string, string)bundleValue in bundleValues)
                     {
                         if (schema.BundleMode == BundledAssetGroupSchema.BundlePackingMode.PackSeparately)
                         {
@@ -1497,7 +1456,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 AddressablesPlayerBuildResult.BundleBuildResult bundleResultInfo = new AddressablesPlayerBuildResult.BundleBuildResult();
                 bundleResultInfo.SourceAssetGroup = assetGroup;
 
-                if (aaContext.PrimaryKeyToLocation.TryGetValue(builtBundleNames[i], out ContentCatalogDataEntry dataEntry))
+                if (GetPrimaryKeyToLocation(aaContext.locations).TryGetValue(builtBundleNames[i], out ContentCatalogDataEntry dataEntry))
                 {
                     var info = buildResult.BundleInfos[builtBundleNames[i]];
                     bundleResultInfo.Crc = info.Crc;
@@ -1520,8 +1479,9 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                     dataEntry.Data = requestOptions;
                     bundleResultInfo.InternalBundleName = requestOptions.BundleName;
 
-                    if (assetGroup == assetGroup.Settings.DefaultGroup && info.Dependencies.Length == 0 && !string.IsNullOrEmpty(info.FileName) &&
-                        (info.FileName.EndsWith("_unitybuiltinshaders.bundle", StringComparison.Ordinal) || info.FileName.EndsWith("_monoscripts.bundle", StringComparison.Ordinal)))
+                    if (assetGroup == sharedBundleGroup && info.Dependencies.Length == 0 && !string.IsNullOrEmpty(info.FileName) &&
+                        (info.FileName.EndsWith($"{BuiltInBundleBaseName}.bundle", StringComparison.Ordinal)
+                         || info.FileName.EndsWith("_monoscripts.bundle", StringComparison.Ordinal)))
                     {
                         outputBundleNames[i] = ConstructAssetBundleName(null, schema, info, outputBundleNames[i]);
                     }
@@ -1557,7 +1517,7 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                     outputBundleNames[i] = StripHashFromBundleLocation(outputBundleNames[i]);
 
                 bundleRenameMap.Add(builtBundleNames[i], outputBundleNames[i]);
-                MoveFileToDestinationWithTimestampIfDifferent(srcPath, targetPath, m_Log);
+                MoveFileToDestinationWithTimestampIfDifferent(srcPath, targetPath, Log);
                 AddPostCatalogUpdatesInternal(assetGroup, postCatalogUpdateCallbacks, dataEntry, targetPath, registry);
 
                 if (addrResult != null)
@@ -1654,10 +1614,10 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 throw new ArgumentException("Invalid primary key for catalog entry " + forLocation.ToString());
 
             forLocation.Keys[0] = newPrimaryKey;
-            aaContext.PrimaryKeyToLocation.Remove(originalKey);
-            aaContext.PrimaryKeyToLocation.Add(newPrimaryKey, forLocation);
+            m_PrimaryKeyToLocation.Remove(originalKey);
+            m_PrimaryKeyToLocation.Add(newPrimaryKey, forLocation);
 
-            if (!aaContext.PrimaryKeyToDependerLocations.TryGetValue(originalKey, out var dependers))
+            if (!GetPrimaryKeyToDependerLocations(aaContext.locations).TryGetValue(originalKey, out var dependers))
                 return; // nothing depends on it
 
             foreach (ContentCatalogDataEntry location in dependers)
@@ -1675,8 +1635,8 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                 }
             }
 
-            aaContext.PrimaryKeyToDependerLocations.Remove(originalKey);
-            aaContext.PrimaryKeyToDependerLocations.Add(newPrimaryKey, dependers);
+            m_PrimaryKeyToDependers.Remove(originalKey);
+            m_PrimaryKeyToDependers.Add(newPrimaryKey, dependers);
         }
 
         private static long GetFileSize(string fileName)
@@ -1699,11 +1659,11 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
             {
                 try
                 {
-#if ENABLE_BINARY_CATALOG
-                    var catalogPath = Addressables.BuildPath + "/catalog.bin";
+#if ENABLE_JSON_CATALOG
+                    var catalogPath = Addressables.BuildPath + "/catalog.json";
                     DeleteFile(catalogPath);
 #else
-                    var catalogPath = Addressables.BuildPath + "/catalog.json";
+                    var catalogPath = Addressables.BuildPath + "/catalog.bin";
                     DeleteFile(catalogPath);
 #endif
                     var settingsPath = Addressables.BuildPath + "/settings.json";
@@ -1722,8 +1682,8 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
         {
             var settingsPath = Addressables.BuildPath + "/settings.json";
             return !String.IsNullOrEmpty(m_CatalogBuildPath) &&
-                File.Exists(m_CatalogBuildPath) &&
-                File.Exists(settingsPath);
+               File.Exists(m_CatalogBuildPath) &&
+               File.Exists(settingsPath);
         }
     }
 }

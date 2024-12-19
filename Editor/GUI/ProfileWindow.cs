@@ -368,7 +368,7 @@ namespace UnityEditor.AddressableAssets.GUI
 
             if (showDropdown)
             {
-                ProfileDataSourceDropdownWindow dataSourceDropdownWindow = new ProfileDataSourceDropdownWindow(fixedDropdownRect, groupType);
+                ProfileDataSourceDropdownWindow dataSourceDropdownWindow = new ProfileDataSourceDropdownWindow(GetSelectedProfile(), fixedDropdownRect, groupType);
                 //TODO: Add Event Handler Here
                 dataSourceDropdownWindow.ValueChanged += DataSourceDropdownValueChanged;
                 PopupWindow.Show(dsDropdownRect, dataSourceDropdownWindow);
@@ -378,14 +378,12 @@ namespace UnityEditor.AddressableAssets.GUI
         internal void DataSourceDropdownValueChanged(object sender, ProfileDataSourceDropdownWindow.DropdownWindowEventArgs e)
         {
             m_CustomGroupTypes[e.GroupType.GroupTypePrefix] = e.IsCustom;
-            if (!e.IsCustom)
-            {
-                var selectedProfile = GetSelectedProfile();
-                Undo.RecordObject(settings, "Variable value changed");
-                settings.profileSettings.SetValue(selectedProfile.id, e.GroupType.GetName(e.GroupType.GetVariableBySuffix(AddressableAssetSettings.kBuildPath)), e.Option.BuildPath);
-                settings.profileSettings.SetValue(selectedProfile.id, e.GroupType.GetName(e.GroupType.GetVariableBySuffix(AddressableAssetSettings.kLoadPath)), e.Option.LoadPath);
-                AddressableAssetUtility.OpenAssetIfUsingVCIntegration(settings);
-            }
+
+            var selectedProfile = GetSelectedProfile();
+            Undo.RecordObject(settings, "Variable value changed");
+            settings.profileSettings.SetValue(selectedProfile.id, e.GroupType.GetName(e.GroupType.GetVariableBySuffix(AddressableAssetSettings.kBuildPath)), e.Option.BuildPath);
+            settings.profileSettings.SetValue(selectedProfile.id, e.GroupType.GetName(e.GroupType.GetVariableBySuffix(AddressableAssetSettings.kLoadPath)), e.Option.LoadPath);
+            AddressableAssetUtility.OpenAssetIfUsingVCIntegration(settings);
         }
 
         private string DetermineOptionString(ProfileGroupType groupType)
@@ -419,7 +417,7 @@ namespace UnityEditor.AddressableAssets.GUI
 
                 if (selectedGroupType.GroupTypePrefix == AddressableAssetSettings.CcdManagerGroupTypePrefix)
                 {
-                    return $"{selectedGroupType.GroupTypePrefix} ({m_ProfileDataSource.currentEnvironment.name})";
+                    return $"{selectedGroupType.GroupTypePrefix} ({m_ProfileDataSource.GetEnvironmentName(settings.profileSettings, GetSelectedProfile().id)})";
                 }
 #endif
                 return selectedGroupType.GroupTypePrefix;

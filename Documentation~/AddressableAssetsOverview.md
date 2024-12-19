@@ -8,8 +8,6 @@ Addressables provides a system that can scale with your project. You can start w
 
 For example, you can start with a single group of Addressable assets, which Unity loads as a set. Then, as you add more content, you can split your assets into multiple groups so that you can load only the ones you need at a given time. As your team grows in size, you can make separate Unity projects to develop different types of assets. These auxiliary projects can produce their own Addressables content builds that you load from the main project.
 
-The Addressables system provides automatic dependency and memory management, efficient AssetBundle packaging and the ability to host assets either remotely or locally. Use this package to control how your applications manages, loads, and unloads assets.
-
 ## Concepts
 
 This overview discusses the following concepts to help you understand how to manage and use your assets with the Addressables system:
@@ -128,3 +126,4 @@ The Addressables system provides the following tools and windows to help you man
 * [Addressable Groups window](xref:addressables-groups-window): The main interface for managing assets, group settings, and making builds.
 * [Profiles window](xref:addressables-profiles): Helps set up paths used by your builds.
 * [Build layout report](xref:addressables-build-layout-report): Describes the AssetBundles produced by a content build.
+* [Analyze tool](xref:addressables-analyze-tool): the Analyze tool runs analysis rules that check whether your Addressables content conforms to the set of rules you have defined. The Addressables system provides some basic rules, such as checking for duplicate assets; you can add your own rules using the [AnalyzeRule] class.

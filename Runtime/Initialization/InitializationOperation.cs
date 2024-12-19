@@ -21,13 +21,11 @@ namespace UnityEngine.AddressableAssets.Initialization
         AsyncOperationHandle<IResourceLocator> m_loadCatalogOp;
         string m_ProviderSuffix;
         AddressablesImpl m_Addressables;
-        ResourceManagerDiagnostics m_Diagnostics;
         InitalizationObjectsOperation m_InitGroupOps;
 
         public InitializationOperation(AddressablesImpl aa)
         {
             m_Addressables = aa;
-            m_Diagnostics = new ResourceManagerDiagnostics(aa.ResourceManager);
         }
 
         protected override float Progress
@@ -55,10 +53,12 @@ namespace UnityEngine.AddressableAssets.Initialization
 
             var runtimeDataLocation = new ResourceLocationBase("RuntimeData", playerSettingsLocation, typeof(JsonAssetProvider).FullName, typeof(ResourceManagerRuntimeData));
 
-            var initOp = new InitializationOperation(aa);
-            initOp.m_rtdOp = aa.ResourceManager.ProvideResource<ResourceManagerRuntimeData>(runtimeDataLocation);
-            initOp.m_ProviderSuffix = providerSuffix;
-            initOp.m_InitGroupOps = new InitalizationObjectsOperation();
+            var initOp = new InitializationOperation(aa)
+            {
+                m_rtdOp = aa.ResourceManager.ProvideResource<ResourceManagerRuntimeData>(runtimeDataLocation),
+                m_ProviderSuffix = providerSuffix,
+                m_InitGroupOps = new InitalizationObjectsOperation()
+            };
             initOp.m_InitGroupOps.Init(initOp.m_rtdOp, aa);
 
             var groupOpHandle = aa.ResourceManager.StartOperation(initOp.m_InitGroupOps, initOp.m_rtdOp);
@@ -112,7 +112,6 @@ namespace UnityEngine.AddressableAssets.Initialization
             }
 #endif
 
-            m_Addressables.ResourceManager.postProfilerEvents = rtd.ProfileEvents;
             WebRequestQueue.SetMaxConcurrentRequests(rtd.MaxConcurrentWebRequests);
             m_Addressables.CatalogRequestsTimeout = rtd.CatalogRequestsTimeout;
             foreach (var catalogLocation in rtd.CatalogLocations)
@@ -123,7 +122,7 @@ namespace UnityEngine.AddressableAssets.Initialization
                 }
             }
 
-            m_Addressables.Release(m_rtdOp);
+            m_rtdOp.Release();
             if (rtd.CertificateHandlerType != null)
                 m_Addressables.ResourceManager.CertificateHandlerInstance = Activator.CreateInstance(rtd.CertificateHandlerType) as CertificateHandler;
 
@@ -135,13 +134,6 @@ namespace UnityEngine.AddressableAssets.Initialization
 #endif
             if (!rtd.LogResourceManagerExceptions)
                 ResourceManager.ExceptionHandler = null;
-
-            if (!rtd.ProfileEvents)
-            {
-                m_Diagnostics.Dispose();
-                m_Diagnostics = null;
-                m_Addressables.ResourceManager.ClearDiagnosticCallbacks();
-            }
 
             Addressables.Log("Addressables - loading initialization objects.");
 
@@ -220,14 +212,16 @@ namespace UnityEngine.AddressableAssets.Initialization
             IResourceLocation remoteHashLocation)
         {
             var data = op.Result;
-            addressables.Release(op);
             if (data == null)
             {
                 var opException = op.OperationException != null ? new Exception("Failed to load content catalog.", op.OperationException) : new Exception("Failed to load content catalog.");
+                op.Release();
                 return addressables.ResourceManager.CreateCompletedOperationWithException<IResourceLocator>(null, opException);
             }
             else
             {
+                op.Release();
+
                 if (data.ResourceProviderData != null)
                     foreach (var providerData in data.ResourceProviderData)
                         LoadProvider(addressables, providerData, providerSuffix);
@@ -249,7 +243,7 @@ namespace UnityEngine.AddressableAssets.Initialization
                     data.location.Dependencies[(int)ContentCatalogProvider.DependencyHashIndex.Remote] = remoteHashLocation;
 
                 IResourceLocator locMap = data.CreateCustomLocator(data.location.PrimaryKey, providerSuffix);
-                addressables.AddResourceLocator(locMap, data.localHash, data.location);
+                addressables.AddResourceLocator(locMap, data.LocalHash, data.location);
                 addressables.AddResourceLocator(new DynamicResourceLocator(addressables));
                 return addressables.ResourceManager.CreateCompletedOperation<IResourceLocator>(locMap, string.Empty);
             }
@@ -304,7 +298,7 @@ namespace UnityEngine.AddressableAssets.Initialization
                 m_Addressables.RemoveResourceLocator(locMap);
                 Result = op.Result;
                 Complete(Result, true, string.Empty);
-                m_Addressables.Release(op);
+                op.Release();
                 Addressables.Log("Addressables - initialization complete.");
             }
             else
@@ -318,12 +312,12 @@ namespace UnityEngine.AddressableAssets.Initialization
                         Complete(Result, false, op.OperationException);
                     else
                         Complete(Result, false, "LoadContentCatalogInternal");
-                    m_Addressables.Release(op);
+                    op.Release();
                 }
                 else
                 {
                     m_loadCatalogOp = LoadContentCatalogInternal(catalogs, index + 1, locMap, remoteHashLocation);
-                    m_Addressables.Release(op);
+                    op.Release();
                 }
             }
         }

@@ -1,14 +1,9 @@
-#if UNITY_2022_2_OR_NEWER
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using UnityEditor;
 using UnityEditor.AddressableAssets.Build.Layout;
 using UnityEditor.AddressableAssets.Settings;
-using UnityEditor.Build.Reporting;
-using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
 
@@ -158,10 +153,14 @@ namespace UnityEditor.AddressableAssets.BuildReportVisualizer
         {
             if (m_BuildReportItems.Count > 0)
             {
-                if (m_BuildReportItems[0].Layout.ReadFull())
-                    m_Window.Consume(m_BuildReportItems[0].Layout);
-                else
-                    Debug.LogWarning($"Unable to load build report at {m_BuildReportItems[0].FilePath}.");
+                if (File.Exists(m_BuildReportItems[0].FilePath))
+                {
+                    BuildLayout layout = BuildLayout.Open(m_BuildReportItems[0].FilePath, readFullFile: true);
+                    if (layout != null)
+                        m_Window.Consume(layout);
+                    else
+                        Debug.LogWarning($"Unable to load build report at {m_BuildReportItems[0].FilePath}.");
+                }
             }
         }
 
@@ -267,6 +266,4 @@ namespace UnityEditor.AddressableAssets.BuildReportVisualizer
             m_ListView.Rebuild();
         }
     }
-
 }
-#endif

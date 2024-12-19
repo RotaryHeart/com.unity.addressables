@@ -58,7 +58,6 @@ namespace UnityEditor.AddressableAssets.Build
         /// Pulls the Previous Content State bin from the associated Cloud Content Delivery bucket set in the profile variables.
         /// </summary>
         UseCCDBucket = 1
-
     }
 #endif
 
@@ -330,21 +329,6 @@ namespace UnityEditor.AddressableAssets.Build
         /// <summary>
         /// Save the content update information for a set of AddressableAssetEntry objects.
         /// </summary>
-        /// <param name="path">File to write content stat info to.  If file already exists, it will be deleted before the new file is created.</param>
-        /// <param name="entries">The entries to save.</param>
-        /// <param name="dependencyData">The raw dependency information generated from the build.</param>
-        /// <param name="playerVersion">The player version to save. This is usually set to AddressableAssetSettings.PlayerBuildVersion.</param>
-        /// <param name="remoteCatalogPath">The server path (if any) that contains an updateable content catalog.  If this is empty, updates cannot occur.</param>
-        /// <returns>True if the file is saved, false otherwise.</returns>
-        [Obsolete]
-        public static bool SaveContentState(string path, List<AddressableAssetEntry> entries, IDependencyData dependencyData, string playerVersion, string remoteCatalogPath)
-        {
-            return SaveContentState(new List<ContentCatalogDataEntry>(), path, entries, dependencyData, playerVersion, remoteCatalogPath);
-        }
-
-        /// <summary>
-        /// Save the content update information for a set of AddressableAssetEntry objects.
-        /// </summary>
         /// <param name="locations">The ContentCatalogDataEntry locations that were built into the Content Catalog.</param>
         /// <param name="path">File to write content stat info to.  If file already exists, it will be deleted before the new file is created.</param>
         /// <param name="entries">The entries to save.</param>
@@ -387,7 +371,7 @@ namespace UnityEditor.AddressableAssets.Build
         /// <param name="remoteCatalogPath">The server path (if any) that contains an updateable content catalog.  If this is empty, updates cannot occur.</param>
         /// <param name="carryOverCacheState">Cached state that needs to carry over from the previous build.  This mainly affects Content Update.</param>
         /// <returns>True if the file is saved, false otherwise.</returns>
-        internal static bool SaveContentState(List<ContentCatalogDataEntry> locations, Dictionary<GUID, List<ContentCatalogDataEntry>> guidToCatalogLocation, string path, List<AddressableAssetEntry> entries, IDependencyData dependencyData, string playerVersion,
+        public static bool SaveContentState(List<ContentCatalogDataEntry> locations, Dictionary<GUID, List<ContentCatalogDataEntry>> guidToCatalogLocation, string path, List<AddressableAssetEntry> entries, IDependencyData dependencyData, string playerVersion,
             string remoteCatalogPath, List<CachedAssetState> carryOverCacheState)
         {
             try
@@ -476,9 +460,9 @@ namespace UnityEditor.AddressableAssets.Build
                     : null;
 
                 if (GetCachedAssetStateForData(guid, addressableEntry.BundleFileId,
-                        addressableEntry.parentGroup.Guid, catalogData,
-                        dependencies.Select(x => x.guid),
-                        out CachedAssetState cachedAssetState))
+                    addressableEntry.parentGroup.Guid, catalogData,
+                    dependencies.Select(x => x.guid),
+                    out CachedAssetState cachedAssetState))
                     cachedInfos.Add(cachedAssetState);
             }
         }
@@ -493,7 +477,13 @@ namespace UnityEditor.AddressableAssets.Build
             return GetContentStateDataPath(browse, null);
         }
 
-        internal static string GetContentStateDataPath(bool browse, AddressableAssetSettings settings)
+        /// <summary>
+        /// Gets the path of the cache data from a selected build.
+        /// </summary>
+        /// <param name="browse">If true, the user is allowed to browse for a specific file.</param>
+        /// <param name="settings">The settings object to use for the build.</param>
+        /// <returns>The path of the previous state .bin file used to detect changes from the previous build to the content update build.</returns>
+        public static string GetContentStateDataPath(bool browse, AddressableAssetSettings settings)
         {
             if (settings == null)
                 settings = AddressableAssetSettingsDefaultObject.Settings;
@@ -536,7 +526,7 @@ namespace UnityEditor.AddressableAssets.Build
             }
 
 #if ENABLE_CCD
-            switch(settings.BuildAndReleaseBinFileOption)
+            switch (settings.BuildAndReleaseBinFileOption)
             {
                 case BuildAndReleaseContentStateBehavior.UsePresetLocation:
                     //do nothing
@@ -756,7 +746,7 @@ namespace UnityEditor.AddressableAssets.Build
                 if (!entryToCacheInfo.TryGetValue(entry.guid, out CachedAssetState cachedInfo) || HasAssetOrDependencyChanged(cachedInfo))
                 {
                     Type mainType = AddressableAssetUtility.MapEditorTypeToRuntimeType(entry.MainAssetType, false);
-                    if ((mainType == null || mainType == typeof(DefaultAsset)) && !entry.IsInResources)
+                    if ((mainType == null || mainType == typeof(DefaultAsset)))
                     {
                         entry.FlaggedDuringContentUpdateRestriction = false;
                     }
@@ -965,7 +955,7 @@ namespace UnityEditor.AddressableAssets.Build
                     if (!groupHasStaticContentMap.TryGetValue(depEntry.parentGroup, out bool groupHasStaticContentEnabled))
                     {
                         groupHasStaticContentEnabled = depEntry.parentGroup.HasSchema<ContentUpdateGroupSchema>() &&
-                                                       depEntry.parentGroup.GetSchema<ContentUpdateGroupSchema>().StaticContent;
+                            depEntry.parentGroup.GetSchema<ContentUpdateGroupSchema>().StaticContent;
 
                         groupHasStaticContentMap.Add(depEntry.parentGroup, groupHasStaticContentEnabled);
                     }

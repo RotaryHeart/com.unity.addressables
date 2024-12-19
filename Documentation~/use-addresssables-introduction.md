@@ -32,6 +32,7 @@ You can use the address string to load an asset:
 
 [!code-cs[sample](../Tests/Editor/DocExampleCode/LoadWithAddress.cs#doc_LoadWithAddress)]
 
+
 Remember that every time you load an asset, you must also release it.
 
 Refer to [Loading a single asset](load-assets.md#load-a-single-asset) for more information.
@@ -42,4 +43,4 @@ You can load sets of assets that have the same label in one operation:
 
 [!code-cs[sample](../Tests/Editor/DocExampleCode/LoadWithLabels.cs#doc_LoadWithLabels)]
 
-Refer to [Loading multiple assets](load-assets.md#load-multiple-assets) for more information.
+See [Loading multiple assets](load-assets.md#load-multiple-assets) for more information.

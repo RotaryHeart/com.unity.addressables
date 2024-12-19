@@ -6,6 +6,7 @@ using UnityEngine.TestTools;
 using NUnit.Framework;
 using System.Collections;
 using System;
+using System.IO;
 using System.Linq;
 using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.ResourceManagement.ResourceLocations;
@@ -23,7 +24,7 @@ namespace AddressableAssetsIntegrationTests
 
         Action<AsyncOperationHandle, Exception> m_PrevHandler;
         protected const string kCatalogExt =
-#if ENABLE_BINARY_CATALOG
+#if !ENABLE_JSON_CATALOG
             ".bin";
 #else
             ".json";
@@ -74,12 +75,23 @@ namespace AddressableAssetsIntegrationTests
         [TearDown]
         public void TearDown()
         {
+            AssetBundleProvider.WaitForAllUnloadingBundlesToComplete();
             if (m_Addressables != null)
             {
+                Assert.AreEqual(0, m_Addressables.ResourceManager.DeferredCompleteCallbacksCount);
+                Assert.AreEqual(0, m_Addressables.ResourceManager.DeferredCallbackCount);
+
                 Assert.AreEqual(m_StartingOpCount, m_Addressables.ResourceManager.OperationCacheCount);
                 Assert.AreEqual(m_StartingTrackedHandleCount, m_Addressables.TrackedHandleCount,
                     $"Starting tracked handle count [{m_StartingInstanceCount}], not equal to current tracked handle count [{m_Addressables.TrackedHandleCount}]");
                 Assert.AreEqual(m_StartingInstanceCount, m_Addressables.ResourceManager.InstanceOperationCount);
+
+                //If we had left deferred callbacks left then make sure to update
+                if (m_Addressables.ResourceManager.DeferredCallbackCount > 0
+                    || m_Addressables.ResourceManager.DeferredCompleteCallbacksCount > 0)
+                {
+                    m_Addressables.ResourceManager.Update(Time.unscaledDeltaTime);
+                }
             }
 
             PostTearDownEvent?.Invoke();
@@ -148,7 +160,6 @@ namespace AddressableAssetsIntegrationTests
                 }
             }
 
-            m_Addressables.ResourceManager.ClearDiagnosticCallbacks();
             m_StartingOpCount = m_Addressables.ResourceManager.OperationCacheCount;
             m_StartingTrackedHandleCount = m_Addressables.TrackedHandleCount;
             m_StartingInstanceCount = m_Addressables.ResourceManager.InstanceOperationCount;
@@ -177,7 +188,6 @@ namespace AddressableAssetsIntegrationTests
                 ResourceManager.ExceptionHandler = null;
             }
 
-            m_Addressables.ResourceManager.ClearDiagnosticCallbacks();
             m_StartingOpCount = m_Addressables.ResourceManager.OperationCacheCount;
             m_StartingTrackedHandleCount = m_Addressables.TrackedHandleCount;
             m_StartingInstanceCount = m_Addressables.ResourceManager.InstanceOperationCount;
@@ -220,31 +230,6 @@ namespace AddressableAssetsIntegrationTests
             return PlayerPrefs.GetString(Addressables.kAddressablesRuntimeDataPath + TypeName, "");
         }
     }
-
-    class AddressablesIntegrationTestsVirtualMode : AddressablesIntegrationTests
-    {
-        protected override string TypeName
-        {
-            get { return "BuildScriptVirtualMode"; }
-        }
-
-        protected override string GetRuntimePath(string testType, string suffix)
-        {
-            return string.Format("{0}" + Addressables.LibraryPath + "settings_TEST_{1}.json", "file://{UnityEngine.Application.dataPath}/../", suffix);
-        }
-
-        protected override ILocationSizeData CreateLocationSizeData(string name, long size, uint crc, string hash)
-        {
-            return new UnityEngine.ResourceManagement.ResourceProviders.Simulation.VirtualAssetBundleRequestOptions()
-            {
-                BundleName = name,
-                BundleSize = size,
-                Crc = crc,
-                Hash = hash
-            };
-        }
-    }
-
 
     class AddressablesIntegrationTestsPackedPlayMode : AddressablesIntegrationTests
     {

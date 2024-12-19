@@ -14,6 +14,7 @@ namespace UnityEditor.AddressableAssets.GUI
 {
     internal class ProfileDataSourceDropdownWindow : PopupWindowContent
     {
+        internal AddressableAssetProfileSettings.BuildProfile m_Profile;
         internal Rect m_WindowRect;
 
         internal enum DropdownState
@@ -85,8 +86,9 @@ namespace UnityEditor.AddressableAssets.GUI
         private GUIContent m_BundleLocationsGUIContent = new GUIContent("Bundle Locations", "Where AssetBundles are stored");
         private GUIContent m_CCDBucketsGUIContent = new GUIContent("Cloud Content Delivery Buckets", "Storage buckets for Unity Cloud Content Delivery");
 
-        public ProfileDataSourceDropdownWindow(Rect fieldRect, ProfileGroupType groupType)
+        public ProfileDataSourceDropdownWindow(AddressableAssetProfileSettings.BuildProfile profile, Rect fieldRect, ProfileGroupType groupType)
         {
+            m_Profile = profile;
             m_GroupType = groupType;
             m_WindowRect = fieldRect;
         }
@@ -99,7 +101,6 @@ namespace UnityEditor.AddressableAssets.GUI
         public async override void OnOpen()
         {
             options.Add(new BuiltInOption());
-            options.Add(new EditorHostedOption());
             options.Add(new CCDOption());
             options.Add(new CustomOption());
 
@@ -180,7 +181,6 @@ namespace UnityEditor.AddressableAssets.GUI
                             switch (option.state)
                             {
                                 case DropdownState.BuiltIn:
-                                case DropdownState.EditorHosted:
                                     var args = new DropdownWindowEventArgs();
                                     args.GroupType = m_GroupType;
                                     args.Option = option;
@@ -227,9 +227,9 @@ namespace UnityEditor.AddressableAssets.GUI
  await DrawCcdEnabledDropdownHeader(window, horizontalBarRect, backButtonRect, refreshButtonRect, evt, "Select Environment", DropdownState.CCD, CCDDropdownState.General);
                             if (isRefreshing) return;
 
-                            m_WindowRect.height = m_ProfileDataSource.environments.Count > 0 ? k_MaxHeight : k_MinHeight;
+                            m_WindowRect.height = dataSourceSettings.environments.Count > 0 ? k_MaxHeight : k_MinHeight;
 
-                            if (m_ProfileDataSource.environments.Count == 1 && m_ProfileDataSource.environments[0].name == "production")
+                            if (dataSourceSettings.environments.Count == 1 && dataSourceSettings.environments[0].name == "production")
                             {
                                 string environmentHelpInfo = $"It is recommended to have at least 1 <b>non-production</b> environment when using the Automatic setting.";
                                 EditorStyles.helpBox.fontSize = 11;
@@ -238,18 +238,18 @@ namespace UnityEditor.AddressableAssets.GUI
                                 EditorGUILayout.HelpBox(environmentHelpInfo, MessageType.Info);
                             }
 
-                            foreach (var env in m_ProfileDataSource.environments)
+                            foreach (var env in dataSourceSettings.environments)
                             {
                                 BaseOption.DrawMenuItem(env.name, null, () =>
                                 {
                                     m_EnvironmentId = env.id;
                                     m_EnvironmentName = env.name;
 
-                                    m_ProfileDataSource.SetEnvironmentById(env.id);
+                                    dataSourceSettings.SetEnvironmentById(AddressableAssetSettingsDefaultObject.Settings.profileSettings, m_Profile.id, env.id);
                                     SetCcdManagedDataState(CcdManagedData.ConfigState.Default);
 
                                     var args = new DropdownWindowEventArgs();
-                                    var groupType = m_ProfileDataSource.GetGroupTypesByPrefix("Automatic").First();
+                                    var groupType = dataSourceSettings.GetGroupTypesByPrefix("Automatic").First();
                                     args.GroupType = m_GroupType;
 
                                     args.Option = new CCDOption();
@@ -268,9 +268,9 @@ namespace UnityEditor.AddressableAssets.GUI
  await DrawCcdEnabledDropdownHeader(window, horizontalBarRect, backButtonRect, refreshButtonRect, evt, "Select Environment", DropdownState.CCD, CCDDropdownState.General);
                             if (isRefreshing) return;
 
-                            m_WindowRect.height = m_ProfileDataSource.environments.Count > 0 ? k_MaxHeight : k_MinHeight;
+                            m_WindowRect.height = dataSourceSettings.environments.Count > 0 ? k_MaxHeight : k_MinHeight;
 
-                            foreach (var env in m_ProfileDataSource.environments)
+                            foreach (var env in dataSourceSettings.environments)
                             {
                                 BaseOption.DrawMenuItem(env.name, nextIcon, () =>
                                 {
@@ -351,7 +351,7 @@ namespace UnityEditor.AddressableAssets.GUI
                             CCDOption.DrawBadges(groupTypes, m_BucketId, m_EnvironmentId, (ProfileGroupType groupType) =>
                             {
 
-                                m_ProfileDataSource.SetEnvironmentById(m_EnvironmentId);
+                                dataSourceSettings.SetEnvironmentById(AddressableAssetSettingsDefaultObject.Settings.profileSettings, m_Profile.id, m_EnvironmentId);
                                 var args = new DropdownWindowEventArgs();
                                 args.GroupType = m_GroupType;
                                 args.Option = new CCDOption();
@@ -373,7 +373,6 @@ namespace UnityEditor.AddressableAssets.GUI
 
                     break;
                 case DropdownState.BuiltIn:
-                case DropdownState.EditorHosted:
                 default:
 #if (ENABLE_CCD && UNITY_2019_4_OR_NEWER)
                     SetCcdManagedDataState(CcdManagedData.ConfigState.None);
@@ -556,30 +555,14 @@ namespace UnityEditor.AddressableAssets.GUI
             }
         }
 
-        internal class EditorHostedOption : BaseOption
-        {
-            internal EditorHostedOption()
-            {
-                OptionName = "Editor Hosted";
-                state = DropdownState.EditorHosted;
-                BuildPath = AddressableAssetSettings.kRemoteBuildPathValue;
-                LoadPath = AddressableAssetSettings.RemoteLoadPathValue;
-            }
-
-            internal override void Draw(Action action)
-            {
-                DrawMenuItem(OptionName, null, action);
-            }
-        }
-
         internal class CustomOption : BaseOption
         {
             internal CustomOption()
             {
                 OptionName = "Custom";
                 state = DropdownState.Custom;
-                BuildPath = null;
-                LoadPath = null;
+                BuildPath = AddressableAssetSettings.kRemoteBuildPathValue;
+                LoadPath = AddressableAssetSettings.kRemoteLoadPathValue;
             }
 
             internal override void Draw(Action action)

@@ -316,9 +316,12 @@ public class BuildLayoutGenerationTaskTests
 
             BuildLayout layout = BuildAndExtractLayout();
 
+            var layoutGroup1 = layout.Groups.Find((g) => g.Name == "Group1");
+            var layoutGroup2 = layout.Groups.Find((g) => g.Name == "Group2");
+
             // Test
-            CollectionAssert.Contains(layout.Groups[0].Bundles[0].Dependencies, layout.Groups[1].Bundles[0]);
-            Assert.AreEqual(layout.Groups[0].Bundles[0].Files[0].Assets[0].ExternallyReferencedAssets[0], layout.Groups[1].Bundles[0].Files[0].Assets[0]);
+            CollectionAssert.Contains(layoutGroup1.Bundles[0].Dependencies, layoutGroup2.Bundles[0]);
+            Assert.AreEqual(layoutGroup1.Bundles[0].Files[0].Assets[0].ExternallyReferencedAssets[0], layoutGroup2.Bundles[0].Files[0].Assets[0]);
         }
         finally // cleanup
         {
@@ -714,6 +717,36 @@ public class BuildLayoutGenerationTaskTests
             if (File.Exists(layoutFilePath))
                 File.Delete(layoutFilePath);
             DeleteScriptableObject("so1");
+        }
+    }
+
+    [Test]
+    public void WhenBuildContainsNullGroup_BuildLayoutSucceeds()
+    {
+        string layoutFilePath = BuildLayoutGenerationTask.GetLayoutFilePathForFormat(ProjectConfigData.BuildLayoutReportFileFormat);
+        AddressableAssetGroup group = null;
+
+        try
+        {
+            // setup
+            group = CreateGroup("Group1");
+            CreateAddressablePrefab("p1", group);
+            AssetDatabase.SaveAssets();
+
+            Settings.groups.Add(null);
+
+            // test
+            Assert.DoesNotThrow(() => BuildAndExtractLayout(), "BuildLayoutGenerationTask does not handle null groups.");
+        }
+        finally // cleanup
+        {
+            if (group != null)
+                Settings.RemoveGroup(group);
+            Settings.RemoveGroup(null);
+
+            if (File.Exists(layoutFilePath))
+                File.Delete(layoutFilePath);
+            DeletePrefab("p1");
         }
     }
 }

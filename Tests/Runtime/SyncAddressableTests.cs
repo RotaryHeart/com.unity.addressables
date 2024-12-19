@@ -25,9 +25,9 @@ namespace AddressableTests.SyncAddressables
         protected string m_PrefabKey = "syncprefabkey";
         protected string m_PrefabKey2 = "syncprefabkey2";
         protected string m_PrefabKey3 = "syncprefabkey3";
+        protected string m_PrefabWithDep = "syncprefabwithdep";
         protected string m_InvalidKey = "notarealkey";
         protected string m_SceneKey = "syncscenekey";
-        protected string m_ResourcePrefabKey = "resourceprefabkey";
 
 #if UNITY_EDITOR
         private AddressableAssetSettings m_settingsInstance;
@@ -58,13 +58,6 @@ namespace AddressableTests.SyncAddressables
             AddressableAssetEntry entry = settings.CreateOrMoveEntry(guid, syncGroup);
             entry.address = m_PrefabKey;
 
-            string path = Path.Combine($"{GetGeneratedAssetsPath()}", "Resources");
-            Directory.CreateDirectory(path);
-
-            string resourceGuid = CreatePrefab(Path.Combine(path, "synctest.prefab"));
-            AddressableAssetEntry resourceEntry = settings.CreateOrMoveEntry(resourceGuid, syncGroup);
-            resourceEntry.address = m_ResourcePrefabKey;
-
             //Create prefab
             string guid2 = CreatePrefab(tempAssetFolder + "/synctest2.prefab");
             AddressableAssetEntry entry2 = settings.CreateOrMoveEntry(guid2, syncGroup2);
@@ -85,6 +78,37 @@ namespace AddressableTests.SyncAddressables
             string guid3 = CreatePrefab(tempAssetFolder + "/synctest3.prefab");
             AddressableAssetEntry entry3 = settings.CreateOrMoveEntry(guid3, syncGroup3);
             entry3.address = m_PrefabKey3;
+
+            // Create prefab with dependency
+            {
+                AddressableAssetGroup syncGroupMat = settings.CreateGroup("SyncAddressablesMatGroup", false, false, true,
+                    new List<AddressableAssetGroupSchema>(), typeof(BundledAssetGroupSchema));
+                syncGroupMat.GetSchema<BundledAssetGroupSchema>().BundleNaming = BundledAssetGroupSchema.BundleNamingStyle.OnlyHash;
+                syncGroupMat.GetSchema<BundledAssetGroupSchema>().UseUnityWebRequestForLocalBundles = true;
+
+                //Create material
+                var mat = new Material(Shader.Find("Unlit/Color"));
+                string matPath = tempAssetFolder + "/synctestmaterial.mat";
+                AssetDatabase.CreateAsset(mat, matPath);
+                string matGuid = AssetDatabase.AssetPathToGUID(matPath);
+                settings.CreateOrMoveEntry(matGuid, syncGroupMat);
+
+                AddressableAssetGroup syncGroupPrefabWithDeps = settings.CreateGroup("SyncAddressablesPrefabWithDepsGroup", false, false, true,
+                    new List<AddressableAssetGroupSchema>(), typeof(BundledAssetGroupSchema));
+                syncGroupPrefabWithDeps.GetSchema<BundledAssetGroupSchema>().BundleNaming = BundledAssetGroupSchema.BundleNamingStyle.OnlyHash;
+                syncGroupPrefabWithDeps.GetSchema<BundledAssetGroupSchema>().UseUnityWebRequestForLocalBundles = true;
+
+                //Create prefab
+                string prefabDepPath = tempAssetFolder + "/synctestprefabwithdeps.prefab";
+                GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                var renderer = go.GetComponent<Renderer>();
+                renderer.sharedMaterials = new Material[] { mat };
+                PrefabUtility.SaveAsPrefabAsset(go, prefabDepPath);
+                Object.DestroyImmediate(go, false);
+                string prefabDepsGuid = AssetDatabase.AssetPathToGUID(prefabDepPath);
+                AddressableAssetEntry prefabDepsEntry = settings.CreateOrMoveEntry(prefabDepsGuid, syncGroupPrefabWithDeps);
+                prefabDepsEntry.address = m_PrefabWithDep;
+            }
 #endif
         }
 
@@ -107,25 +131,6 @@ namespace AddressableTests.SyncAddressables
             Assert.IsNotNull(loadOp.Result);
             Assert.AreEqual(loadOp.Result, result);
 
-            //Cleanup
-            ReleaseOp(loadOp);
-        }
-
-        [Test]
-        public void SyncAddressableLoad_CompletesWithValidKeyWhenLoadedFromResources()
-        {
-            //string path = Path.Combine($"{GetGeneratedAssetsPath()}", "Resources");
-
-            IResourceLocation loc = new ResourceLocationBase(m_ResourcePrefabKey, "synctest", typeof(LegacyResourcesProvider).FullName, typeof(GameObject));
-            if (!m_Addressables.ResourceManager.ResourceProviders.Any(rp => rp.GetType() == typeof(LegacyResourcesProvider)))
-                m_Addressables.ResourceManager.ResourceProviders.Add(new LegacyResourcesProvider());
-
-            var loadOp = m_Addressables.LoadAssetAsync<GameObject>(loc);
-            var result = loadOp.WaitForCompletion();
-            Assert.AreEqual(AsyncOperationStatus.Succeeded, loadOp.Status);
-            Assert.NotNull(result);
-            Assert.IsNotNull(loadOp.Result);
-            Assert.AreEqual(loadOp.Result, result);
             //Cleanup
             ReleaseOp(loadOp);
         }
@@ -349,6 +354,7 @@ namespace AddressableTests.SyncAddressables
             ReleaseOp(requestOp);
         }
 
+        #if ENABLE_JSON_CATALOG
         [Test]
         public void LoadContentCatalogSynchronously_SuccessfullyCompletes_WithValidPath()
         {
@@ -387,6 +393,8 @@ namespace AddressableTests.SyncAddressables
             LogAssert.ignoreFailingMessages = savedLogAssertState;
         }
 
+#endif
+
         [Test]
         public void InstanceOperation_WithFailedBundleLoad_CompletesSync()
         {
@@ -402,7 +410,7 @@ namespace AddressableTests.SyncAddressables
             LogAssert.Expect(LogType.Error, new Regex("InvalidKeyException*"));
 
             Assert.IsTrue(instanceOperation.IsDone);
-            m_Addressables.Release(depOp);
+            depOp.Release();
         }
 
         [Test]
@@ -415,7 +423,7 @@ namespace AddressableTests.SyncAddressables
                     "Exception thrown is not of the correct type.");
             };
             var depOp = m_Addressables.LoadAssetAsync<GameObject>(m_InvalidKey);
-            m_Addressables.Release(depOp);
+            depOp.Release();
             ResourceManager.ExceptionHandler = prevHandler;
         }
 
@@ -431,7 +439,7 @@ namespace AddressableTests.SyncAddressables
             instanceOperation.WaitForCompletion();
 
             Assert.IsTrue(instanceOperation.IsDone);
-            m_Addressables.Release(depOp);
+            depOp.Release();
         }
 
         [TestCase(true)]
@@ -439,7 +447,7 @@ namespace AddressableTests.SyncAddressables
         public void CleanBundleCache_CompletesSynchronously(bool forceSingleThreading)
         {
 #if ENABLE_CACHING
-            if (BuildScriptMode == TestBuildScriptMode.Fast || BuildScriptMode == TestBuildScriptMode.Virtual)
+            if (BuildScriptMode == TestBuildScriptMode.Fast)
                 Assert.Ignore("Bundle caching does not occur when using this playmode.");
 
             var cleanOp = m_Addressables.CleanBundleCache(null, forceSingleThreading);
@@ -470,7 +478,8 @@ namespace AddressableTests.SyncAddressables
         [UnityTest]
         public IEnumerator LoadingScene_Synchronously_ActivateOnLoadDisabled_Completes()
         {
-            var loadOp = m_Addressables.LoadSceneAsync(m_SceneKey, new LoadSceneParameters(LoadSceneMode.Additive), false);
+            var loadOp = m_Addressables.LoadSceneAsync(m_SceneKey,
+                new LoadSceneParameters(LoadSceneMode.Additive), SceneReleaseMode.ReleaseSceneWhenSceneUnloaded, false);
             bool callbackCompleted = false;
             loadOp.Completed += handle => callbackCompleted = true;
             var result = loadOp.WaitForCompletion();
@@ -495,7 +504,8 @@ namespace AddressableTests.SyncAddressables
         [UnityTest]
         public IEnumerator LoadingScene_Synchronously_ActivateOnLoad_CompletesAsynchronously()
         {
-            var loadOp = m_Addressables.LoadSceneAsync(m_SceneKey, new LoadSceneParameters(LoadSceneMode.Additive), true);
+            var loadOp = m_Addressables.LoadSceneAsync(m_SceneKey,
+                new LoadSceneParameters(LoadSceneMode.Additive), SceneReleaseMode.ReleaseSceneWhenSceneUnloaded, true);
             bool callbackCompleted = false;
             loadOp.Completed += handle => callbackCompleted = true;
             var result = loadOp.WaitForCompletion();
@@ -583,77 +593,34 @@ namespace AddressableTests.SyncAddressables
         }
     }
 
-    class SyncAddressableTests_VirtualMode : SyncAddressablesWithSceneTests
-    {
-        protected override TestBuildScriptMode BuildScriptMode
-        {
-            get { return TestBuildScriptMode.Virtual; }
-        }
-    }
-
-    class SyncAddressableTests_PackedPlaymodeMode : SyncAddressablesWithSceneTests
+    class SyncAddressableTests_PackedPlaymodeMode_SceneTests : SyncAddressablesWithSceneTests
     {
         protected override TestBuildScriptMode BuildScriptMode
         {
             get { return TestBuildScriptMode.PackedPlaymode; }
         }
+    }
 
-        [Test]
-        public void DownloadDependencies_CompletesSynchronously_WhenAutoReleased()
+    class SyncAddressableTests_PackedPlaymodeMode_UnityWebRequestTests : SyncAddressableTests_UnityWebRequestTests
+    {
+        protected override TestBuildScriptMode BuildScriptMode
         {
-            var downloadDependencies = m_Addressables.DownloadDependenciesAsync((object)m_PrefabKey, true);
-            downloadDependencies.WaitForCompletion();
-            Assert.IsTrue(downloadDependencies.IsDone);
+            get { return TestBuildScriptMode.PackedPlaymode; }
         }
-
-#if ENABLE_CACHING && ENABLE_ASYNC_ASSETBUNDLE_UWR
-        [Test]
-        public void SyncAddressableLoad_CachedBundle_WithAutoLoadEnabled_Completes()
-        {
-            // Cache the bundle
-            Caching.ClearCache();
-            var initloadOp = m_Addressables.LoadAssetAsync<GameObject>(m_PrefabKey3);
-            initloadOp.WaitForCompletion();
-            ReleaseOp(initloadOp);
-
-            var loadOp = m_Addressables.LoadAssetAsync<GameObject>(m_PrefabKey3);
-            var result = loadOp.WaitForCompletion();
-            Assert.AreEqual(AsyncOperationStatus.Succeeded, loadOp.Status);
-            Assert.NotNull(result);
-            Assert.IsNotNull(loadOp.Result);
-            Assert.AreEqual(loadOp.Result, result);
-
-            ReleaseOp(loadOp);
-            Caching.ClearCache();
-        }
-
-        [Test]
-        public void SyncAddressableLoad_NotCachedBundle_WithAutoLoadEnabled_Completes()
-        {
-            Caching.ClearCache();
-
-            var loadOp = m_Addressables.LoadAssetAsync<GameObject>(m_PrefabKey3);
-            var result = loadOp.WaitForCompletion();
-            Assert.AreEqual(AsyncOperationStatus.Succeeded, loadOp.Status);
-            Assert.NotNull(result);
-            Assert.IsNotNull(loadOp.Result);
-            Assert.AreEqual(loadOp.Result, result);
-
-            ReleaseOp(loadOp);
-            Caching.ClearCache();
-        }
-#endif
     }
 #endif
 
-    [UnityPlatform(exclude = new[] {RuntimePlatform.WindowsEditor, RuntimePlatform.OSXEditor, RuntimePlatform.LinuxEditor})]
-    class SyncAddressableTests_PackedMode : SyncAddressableTests
+    [UnityPlatform(exclude = new[] { RuntimePlatform.WindowsEditor, RuntimePlatform.OSXEditor, RuntimePlatform.LinuxEditor })]
+    class SyncAddressableTests_PackedMode_UnityWebRequestTests : SyncAddressableTests_UnityWebRequestTests
     {
         protected override TestBuildScriptMode BuildScriptMode
         {
             get { return TestBuildScriptMode.Packed; }
         }
+    }
 
+    abstract class SyncAddressableTests_UnityWebRequestTests : SyncAddressableTests
+    {
         [Test]
         public void DownloadDependencies_CompletesSynchronously_WhenAutoReleased()
         {
@@ -698,6 +665,29 @@ namespace AddressableTests.SyncAddressables
             ReleaseOp(loadOp);
             Caching.ClearCache();
         }
+
+        [Test]
+        public void SyncAddressableLoad_WhenMaxConcurrentRequestsIsOne_Succeeds()
+        {
+            int maxRequests = WebRequestQueue.s_MaxRequest;
+            try
+            {
+                WebRequestQueue.SetMaxConcurrentRequests(1);
+                Caching.ClearCache();
+
+                var loadOp = m_Addressables.LoadAssetAsync<GameObject>(m_PrefabWithDep);
+                Assert.DoesNotThrow(() => loadOp.WaitForCompletion());
+                Assert.AreEqual(AsyncOperationStatus.Succeeded, loadOp.Status);
+
+                ReleaseOp(loadOp);
+            }
+            finally
+            {
+                Caching.ClearCache();
+                WebRequestQueue.SetMaxConcurrentRequests(maxRequests);
+            }
+        }
+
 #endif
     }
 }

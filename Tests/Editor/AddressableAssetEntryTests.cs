@@ -46,7 +46,6 @@ namespace UnityEditor.AddressableAssets.Tests
         protected override void OnCleanup()
         {
             Settings.RemoveGroup(m_testGroup);
-
         }
 
         [Test]
@@ -164,9 +163,9 @@ namespace UnityEditor.AddressableAssets.Tests
 
             //Test
             entry.CreateCatalogEntries(new List<ContentCatalogDataEntry>(), false, "fakeProvider", new List<object>(), null, new Dictionary<GUID, AssetLoadInfo>()
-                {
-                    {new GUID(guid), new AssetLoadInfo() {includedObjects = new List<ObjectIdentifier>()}}
-                },
+            {
+                {new GUID(guid), new AssetLoadInfo() {includedObjects = new List<ObjectIdentifier>()}}
+            },
                 new HashSet<Type>(), true, false, false, new HashSet<string>());
 
             //Assert
@@ -388,6 +387,93 @@ namespace UnityEditor.AddressableAssets.Tests
             }
         }
 
+        [Test]
+        public void GatherFolderEntries_RecurseAll_WhenSubEntry_IsMarkedAddrAndHasLabelAdded_FolderEntryHasNoLabelAdded()
+        {
+            AddressableAssetEntry mainFolderEntry = null;
+            AddressableAssetEntry prefabEntry = null;
+            string mainFolderPath = GetAssetPath("TestFolder");
+            var testGroup2 = Settings.CreateGroup("testGroup2", false, false, false, null, typeof(BundledAssetGroupSchema));
+
+            try
+            {
+                //Setup
+                string prefabPath = Path.Combine(mainFolderPath, "mainFolder.prefab").Replace('\\', '/');
+                Directory.CreateDirectory(mainFolderPath);
+                PrefabUtility.SaveAsPrefabAsset(new GameObject("mainFolderAsset"), prefabPath);
+
+                string mainFolderGuid = AssetDatabase.AssetPathToGUID(mainFolderPath);
+                string prefabGuid = AssetDatabase.AssetPathToGUID(prefabPath);
+                mainFolderEntry = Settings.CreateOrMoveEntry(mainFolderGuid, m_testGroup, false);
+
+                //Test
+                List<AddressableAssetEntry> entries = new List<AddressableAssetEntry>();
+                mainFolderEntry.GatherFolderEntries(entries, true, false, null);
+                Assert.AreEqual(1, entries.Count);
+                prefabEntry = entries[0];
+                Assert.AreEqual(prefabEntry.AssetPath, prefabPath);
+
+                prefabEntry.SetLabel("test", true, true);
+                Settings.MoveEntry(prefabEntry, testGroup2);
+                Assert.AreEqual(1, prefabEntry.labels.Count);
+                Assert.AreEqual(0, mainFolderEntry.labels.Count);
+            }
+            finally
+            {
+                //Cleanup
+                Settings.RemoveAssetEntry(mainFolderEntry, false);
+                Settings.RemoveAssetEntry(prefabEntry, false);
+                Directory.Delete(mainFolderPath, true);
+
+                Settings.RemoveGroup(testGroup2);
+            }
+        }
+
+
+        [Test]
+        public void GatherFolderEntries_NoRecurseAll_WhenSubFolderEntry_IsMarkedAddrAndHasLabelAdded_FolderEntryHasNoLabelAdded()
+        {
+            AddressableAssetEntry mainFolderEntry = null;
+            AddressableAssetEntry subFolderEntry = null;
+            string mainFolderPath = GetAssetPath("TestFolder");
+            var testGroup2 = Settings.CreateGroup("testGroup2", false, false, false, null, typeof(BundledAssetGroupSchema));
+
+            try
+            {
+                //Setup
+                string subFolderPath = Path.Combine(mainFolderPath, "SubFolder").Replace('\\', '/');
+                string prefabPath = Path.Combine(subFolderPath, "subFolder.prefab").Replace('\\', '/');
+                Directory.CreateDirectory(mainFolderPath);
+                Directory.CreateDirectory(subFolderPath);
+                PrefabUtility.SaveAsPrefabAsset(new GameObject("subFolderAsset"), prefabPath);
+
+                string mainFolderGuid = AssetDatabase.AssetPathToGUID(mainFolderPath);
+                string prefabGuid = AssetDatabase.AssetPathToGUID(prefabPath);
+                mainFolderEntry = Settings.CreateOrMoveEntry(mainFolderGuid, m_testGroup, false);
+
+                //Test
+                List<AddressableAssetEntry> entries = new List<AddressableAssetEntry>();
+                mainFolderEntry.GatherFolderEntries(entries, false, false, null);
+                Assert.AreEqual(1, entries.Count);
+                subFolderEntry = entries[0];
+                Assert.AreEqual(subFolderEntry.AssetPath, subFolderPath);
+
+                subFolderEntry.SetLabel("test", true, true);
+                Settings.MoveEntry(subFolderEntry, testGroup2);
+                Assert.AreEqual(1, subFolderEntry.labels.Count);
+                Assert.AreEqual(0, mainFolderEntry.labels.Count);
+            }
+            finally
+            {
+                //Cleanup
+                Settings.RemoveAssetEntry(mainFolderEntry, false);
+                Settings.RemoveAssetEntry(subFolderEntry, false);
+                Directory.Delete(mainFolderPath, true);
+
+                Settings.RemoveGroup(testGroup2);
+            }
+        }
+
         [TestCase(true)]
         [TestCase(false)]
         public void WhenGatherFolderEntries_ReturnsCorrectAssetObjects(bool includeSubObjects)
@@ -490,6 +576,43 @@ namespace UnityEditor.AddressableAssets.Tests
         }
 
         [Test]
+        public void GetFolderSubEntry_WhenFolderSubEntry_IsMarkedAddrAndHasLabelAdded_FolderEntryHasNoLabelAdded()
+        {
+            AddressableAssetEntry mainFolderEntry = null;
+            AddressableAssetEntry prefabEntry = null;
+            string testAssetFolder = GetAssetPath("TestFolder");
+            var testGroup2 = Settings.CreateGroup("testGroup2", false, false, false, null, typeof(BundledAssetGroupSchema));
+
+            try
+            {
+                //Setup
+                string mainPrefabPath = Path.Combine(testAssetFolder, "mainFolder.prefab").Replace('\\', '/');
+                Directory.CreateDirectory(testAssetFolder);
+                PrefabUtility.SaveAsPrefabAsset(new GameObject("mainFolderAsset"), mainPrefabPath);
+
+                string mainFolderGuid = AssetDatabase.AssetPathToGUID(testAssetFolder);
+                string mainPrefabGuid = AssetDatabase.AssetPathToGUID(mainPrefabPath);
+                mainFolderEntry = Settings.CreateOrMoveEntry(mainFolderGuid, m_testGroup, false);
+
+                //Test
+                prefabEntry = mainFolderEntry.GetFolderSubEntry(mainPrefabGuid, mainPrefabPath);
+                prefabEntry.SetLabel("test", true, true);
+                Settings.MoveEntry(prefabEntry, testGroup2);
+                Assert.AreEqual(1, prefabEntry.labels.Count);
+                Assert.AreEqual(0, mainFolderEntry.labels.Count);
+            }
+            finally
+            {
+                //Cleanup
+                Settings.RemoveAssetEntry(mainFolderEntry, false);
+                Settings.RemoveAssetEntry(prefabEntry, false);
+                Directory.Delete(testAssetFolder, true);
+
+                Settings.RemoveGroup(testGroup2);
+            }
+        }
+
+        [Test]
         public void WhenClassReferencedByAddressableAssetEntryIsReloaded_CachedMainAssetTypeIsReset()
         {
             // Setup
@@ -511,68 +634,6 @@ namespace UnityEditor.AddressableAssets.Tests
 
             // Cleanup
             AssetDatabase.DeleteAsset(path);
-        }
-
-        [Test]
-        public void GatherAllAssets_WhenResourcesExist_RecurseAllIsFalse_ReturnsEntriesForValidFilesAndTopFoldersOnly()
-        {
-            using (new HideResourceFoldersScope())
-            {
-                var resourcePath = GetAssetPath("Resources");
-                var subFolderPath = resourcePath + "/Subfolder";
-                Directory.CreateDirectory(subFolderPath);
-
-                var group = Settings.FindGroup(AddressableAssetSettings.PlayerDataGroupName);
-                var resourceEntry = Settings.CreateOrMoveEntry(AddressableAssetEntry.ResourcesName, group, false);
-                int builtInResourcesCount = ResourcesTestUtility.GetResourcesEntryCount(Settings, false);
-
-                var r1GUID = CreateAsset(resourcePath + "/testResource1.prefab", "testResource1");
-                var r2GUID = CreateAsset(subFolderPath + "/testResource2.prefab", "testResource2");
-
-                var entries = new List<AddressableAssetEntry>();
-                resourceEntry.GatherAllAssets(entries, false, false, true);
-
-                // Assert
-                var subFolderGUID = AssetDatabase.AssetPathToGUID(subFolderPath);
-                Assert.AreEqual(2 + builtInResourcesCount, entries.Count);
-                Assert.IsTrue(entries.Any(e => e.guid == r1GUID));
-                Assert.IsFalse(entries.Any(e => e.guid == r2GUID));
-                Assert.IsTrue(entries.Any(e => e.guid == subFolderGUID));
-
-                // Cleanup
-                Directory.Delete(resourcePath, true);
-            }
-        }
-
-        [Test]
-        public void GatherAllAssets_WhenResourcesExist_RecurseAllIsTrue_ReturnsEntriesRecursivelyForValidFilesOnly()
-        {
-            using (new HideResourceFoldersScope())
-            {
-                var resourcePath = GetAssetPath("Resources");
-                var subFolderPath = resourcePath + "/Subfolder";
-                Directory.CreateDirectory(subFolderPath);
-
-                var group = Settings.FindGroup(AddressableAssetSettings.PlayerDataGroupName);
-                var resourceEntry = Settings.CreateOrMoveEntry(AddressableAssetEntry.ResourcesName, group, false);
-                int builtInResourcesCount = ResourcesTestUtility.GetResourcesEntryCount(Settings, true);
-
-                var r1GUID = CreateAsset(resourcePath + "/testResource1.prefab", "testResource1");
-                var r2GUID = CreateAsset(subFolderPath + "/testResource2.prefab", "testResource2");
-
-                var entries = new List<AddressableAssetEntry>();
-                resourceEntry.GatherAllAssets(entries, false, true, true);
-
-                // Assert
-                var subFolderGUID = AssetDatabase.AssetPathToGUID(subFolderPath);
-                Assert.AreEqual(2 + builtInResourcesCount, entries.Count);
-                Assert.IsTrue(entries.Any(e => e.guid == r1GUID));
-                Assert.IsTrue(entries.Any(e => e.guid == r2GUID));
-                Assert.IsFalse(entries.Any(e => e.guid == subFolderGUID));
-
-                // Cleanup
-                Directory.Delete(resourcePath, true);
-            }
         }
 
         [Test]
@@ -651,59 +712,6 @@ namespace UnityEditor.AddressableAssets.Tests
         }
 
         [Test]
-        public void GatherAllAssetReferenceDrawableEntries_ReturnsBuiltInScenes()
-        {
-            //Setup
-            string scenePath = "TestScenePath";
-            var savedCache = BuiltinSceneCache.scenes;
-            BuiltinSceneCache.scenes = new EditorBuildSettingsScene[]
-            {
-                new EditorBuildSettingsScene(scenePath, true)
-            };
-            AddressableAssetEntry entry = Settings.CreateOrMoveEntry(AddressableAssetEntry.EditorSceneListName, m_testGroup, false);
-
-            //Test
-            List<IReferenceEntryData> results = new List<IReferenceEntryData>();
-            HashSet<string> processed = new HashSet<string>();
-            m_testGroup.GatherAllDirectAssetReferenceEntryData(results, processed);
-            m_testGroup.GatherAllFolderSubAssetReferenceEntryData(results, processed);
-
-            //Assert
-            Assert.AreEqual(0, results.Count);
-
-            //Cleanup
-            BuiltinSceneCache.scenes = savedCache;
-            Settings.RemoveAssetEntry(AddressableAssetEntry.EditorSceneListName, false);
-        }
-
-        [Test]
-        public void GatherAllAssetReferenceDrawableEntries_DoesNotReturnResources()
-        {
-            //Setup
-            string scenePath = "TestScenePath";
-            var savedCache = BuiltinSceneCache.scenes;
-            BuiltinSceneCache.scenes = new EditorBuildSettingsScene[]
-            {
-                new EditorBuildSettingsScene(scenePath, true)
-            };
-
-            AddressableAssetEntry entry = Settings.CreateOrMoveEntry(AddressableAssetEntry.ResourcesName, m_testGroup, false);
-
-            //Test
-            List<IReferenceEntryData> results = new List<IReferenceEntryData>();
-            HashSet<string> processed = new HashSet<string>();
-            m_testGroup.GatherAllDirectAssetReferenceEntryData(results, processed);
-            m_testGroup.GatherAllFolderSubAssetReferenceEntryData(results, processed);
-
-            //Assert
-            Assert.AreEqual(0, results.Count);
-
-            //Cleanup
-            BuiltinSceneCache.scenes = savedCache;
-            Settings.RemoveAssetEntry(AddressableAssetEntry.ResourcesName, false);
-        }
-
-        [Test]
         public void GatherAllAssetReferenceDrawableEntries_ReturnsFolderSubAssets()
         {
             //Setup
@@ -737,52 +745,6 @@ namespace UnityEditor.AddressableAssets.Tests
         }
 
         [Test]
-        public void GatherAllAssetReferenceDrawableEntries_DoesNotReturnScenesInFolder_IfSceneIsInBuiltInScenes()
-        {
-            //Setup
-            string testAssetFolder = GetAssetPath("TestFolder");
-            string testAssetSubFolder = Path.Combine(testAssetFolder, "SubFolder");
-            Directory.CreateDirectory(testAssetFolder);
-            Directory.CreateDirectory(testAssetSubFolder);
-
-            AssetDatabase.ImportAsset(testAssetFolder);
-            AssetDatabase.ImportAsset(testAssetSubFolder);
-
-            string mainPrefabPath = Path.Combine(testAssetFolder, "mainFolder.prefab").Replace('\\', '/');
-            string subPrefabPath = Path.Combine(testAssetSubFolder, "subFolder.prefab").Replace('\\', '/');
-            string scenePath = Path.Combine(testAssetFolder, "TestScenePath.unity").Replace('\\', '/');
-
-            var savedCache = BuiltinSceneCache.scenes;
-            BuiltinSceneCache.scenes = new EditorBuildSettingsScene[]
-            {
-                new EditorBuildSettingsScene(scenePath, true)
-            };
-
-            PrefabUtility.SaveAsPrefabAsset(new GameObject("mainFolderAsset"), mainPrefabPath);
-            PrefabUtility.SaveAsPrefabAsset(new GameObject("subFolderAsset"), subPrefabPath);
-            EditorSceneManager.SaveScene(EditorSceneManager.NewScene(NewSceneSetup.EmptyScene), scenePath);
-
-            string guid = AssetDatabase.AssetPathToGUID(testAssetFolder);
-            AddressableAssetEntry entry = Settings.CreateOrMoveEntry(guid, m_testGroup, false);
-
-            //Test
-            List<IReferenceEntryData> results = new List<IReferenceEntryData>();
-            HashSet<string> processed = new HashSet<string>();
-            m_testGroup.GatherAllDirectAssetReferenceEntryData(results, processed);
-            m_testGroup.GatherAllFolderSubAssetReferenceEntryData(results, processed);
-
-            //Assert
-            Assert.AreEqual(2, results.Count);
-            Assert.AreEqual(mainPrefabPath, results[0].AssetPath);
-            Assert.AreEqual(subPrefabPath, results[1].AssetPath);
-
-            //Cleanup
-            DirectoryUtility.DeleteDirectory(testAssetFolder, false);
-            BuiltinSceneCache.scenes = savedCache;
-            Settings.RemoveAssetEntry(guid, false);
-        }
-
-        [Test]
         public void GatherAllAssetReferenceDrawableEntries_AddsSimpleAssetEntries()
         {
             //Setup
@@ -804,45 +766,6 @@ namespace UnityEditor.AddressableAssets.Tests
             finally
             {
                 Settings.RemoveAssetEntry(guid, false);
-            }
-        }
-
-        [Test]
-        public void GatherResourcesEntries_GathersAllResourceEntries_IncludingLowercase()
-        {
-            var resourcePath = GetAssetPath("Resources");
-            string testAssetFolder = GetAssetPath("TestFolder");
-            var subFolderPath = testAssetFolder + "/resources";
-
-            string r1GUID = null;
-            string r2GUID = null;
-
-            try
-            {
-                r1GUID = CreateAsset(resourcePath + "/testResourceupper.prefab", "testResourceupper");
-                r2GUID = CreateAsset(subFolderPath + "/testResourcelower.prefab", "testResourcelower");
-
-                var group = Settings.FindGroup(AddressableAssetSettings.PlayerDataGroupName);
-                var resourceEntry = Settings.CreateOrMoveEntry(AddressableAssetEntry.ResourcesName, group, false);
-
-                var entries = new List<AddressableAssetEntry>();
-                resourceEntry.GatherResourcesEntries(entries, true, null);
-
-                // Assert
-                Assert.IsTrue(entries.Any(e => e.guid == r1GUID));
-                Assert.IsTrue(entries.Any(e => e.guid == r2GUID));
-            }
-            finally
-            {
-                // Cleanup
-                if (!string.IsNullOrEmpty(r1GUID))
-                    Settings.RemoveAssetEntry(r1GUID);
-                if (!string.IsNullOrEmpty(r2GUID))
-                    Settings.RemoveAssetEntry(r2GUID);
-                if (!string.IsNullOrEmpty(AddressableAssetEntry.ResourcesName))
-                    Settings.RemoveAssetEntry(AddressableAssetEntry.ResourcesName);
-                AssetDatabase.DeleteAsset(resourcePath);
-                AssetDatabase.DeleteAsset(testAssetFolder);
             }
         }
 
@@ -943,29 +866,6 @@ namespace UnityEditor.AddressableAssets.Tests
 
             AssetDatabase.DeleteAsset(path);
         }
-
-#pragma warning disable 0618
-        [Test]
-        public void CanConvertEntryCollectionToEntries()
-        {
-            Settings.DenyEntryCollectionPermission = true;
-            var collectionPath = Path.Combine(TestFolder, "collection.asset").Replace('\\', '/');
-            var collection = ScriptableObject.CreateInstance<AddressableAssetEntryCollection>();
-
-            var assetPath = GetAssetPath("test.prefab");
-            var assetGuid = AssetDatabase.AssetPathToGUID(assetPath);
-            var collectionEntry = new AddressableAssetEntry(assetGuid, "TestAssetEntry", null, false);
-            collectionEntry.m_cachedAssetPath = "TestPath";
-            collection.Entries.Add(collectionEntry);
-            AssetDatabase.CreateAsset(collection, collectionPath);
-            Settings.DenyEntryCollectionPermission = false;
-
-            bool converted = this.Settings.ConvertAssetEntryCollections(new List<string>() {collectionPath});
-            Assert.IsTrue(converted, "Failed to convert AssetEntryCollection to standard Group Entries");
-            var addedEntry = Settings.DefaultGroup.GetAssetEntry(assetGuid);
-            Assert.IsNotNull(addedEntry, "Could not find entry in default Group.");
-        }
-#pragma warning restore 0618
 
         string CreateSpriteAtlasWithSprite()
         {
