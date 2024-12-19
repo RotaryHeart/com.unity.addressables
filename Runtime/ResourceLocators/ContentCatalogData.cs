@@ -76,10 +76,13 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
         //used to verify that this is a valid catalog data file
         static int kMagic = nameof(ContentCatalogData).GetHashCode();
         //used to check the version of the data in case the format needs to change in the future
-        const int kVersion = 1;
+        const int kVersion = 2;
 
+        /// <summary>
+        /// Stores the local catalog hash
+        /// </summary>
         [NonSerialized]
-        internal string localHash;
+        public string LocalHash;
 
         [NonSerialized]
         internal IResourceLocation location;
@@ -89,6 +92,11 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
 
         [SerializeField]
         internal string m_BuildResultHash;
+
+        /// <summary>
+        /// Stores the hash for the build result
+        /// </summary>
+        public string BuildResultHash { get => m_BuildResultHash; set => m_BuildResultHash = value; }
 
         /// <summary>
         /// Stores the id of the data provider.
@@ -164,7 +172,7 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
 #endif
 
 
-#if ENABLE_BINARY_CATALOG
+#if !ENABLE_JSON_CATALOG
 
         internal void CleanData()
         {
@@ -203,12 +211,18 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
             var bytes = SerializeToByteArray();
             File.WriteAllBytes(path, bytes);
         }
+
 #endif
 
         BinaryStorageBuffer.Reader m_Reader;
         internal ContentCatalogData(BinaryStorageBuffer.Reader reader)
         {
             m_Reader = reader;
+        }
+
+        internal byte[] GetBytes()
+        {
+            return m_Reader.GetBuffer();
         }
 
         internal IResourceLocator CreateCustomLocator(string overrideId = "", string providerSuffix = null, int locatorCacheSize = 100)
@@ -231,13 +245,15 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
                 var cd = new ContentCatalogData(reader);
                 var h = reader.ReadValue<ResourceLocator.Header>(offset);
                 if (h.magic != kMagic)
-                {
-                    var h2 = reader.ReadValue<ResourceLocator.Header>(offset);
                     throw new Exception("Invalid header data!!!");
-                }
+                if (h.version != kVersion)
+                    throw new Exception($"Expected catalog data version {kVersion}, but file was written with version {h.version}.");
+
                 cd.InstanceProviderData = reader.ReadObject<ObjectInitializationData>(h.instanceProvider);
                 cd.SceneProviderData = reader.ReadObject<ObjectInitializationData>(h.sceneProvider);
                 cd.ResourceProviderData = reader.ReadObjectArray<ObjectInitializationData>(h.initObjectsArray).ToList();
+
+                cd.BuildResultHash = reader.ReadString(h.buildResultHash);
                 return cd;
             }
 
@@ -267,7 +283,8 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
                     idOffset = writer.WriteString(cd.ProviderId),
                     instanceProvider = writer.WriteObject(cd.InstanceProviderData, false),
                     sceneProvider = writer.WriteObject(cd.SceneProviderData, false),
-                    initObjectsArray = writer.WriteObjects(cd.m_ResourceProviderData, false)
+                    initObjectsArray = writer.WriteObjects(cd.m_ResourceProviderData, false),
+                    buildResultHash = writer.WriteString(cd.BuildResultHash)
                 };
                 writer.Write(headerOffset, in header);
 
@@ -664,16 +681,6 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
         /// Sets the catalog data before serialization.
         /// </summary>
         /// <param name="data">The list of catalog entries.</param>
-        /// <param name="optimizeSize">Whether to optimize the catalog size by extracting common internal id prefixes.</param>
-        [Obsolete("The ]optimizeSize parameter for SetData is no longer used.")]
-        public void SetData(IList<ContentCatalogDataEntry> data, bool optimizeSize)
-        {
-        }
-
-        /// <summary>
-        /// Sets the catalog data before serialization.
-        /// </summary>
-        /// <param name="data">The list of catalog entries.</param>
         public void SetData(IList<ContentCatalogDataEntry> data)
         {
             if (data == null)
@@ -815,7 +822,7 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
 
 
 #endif
-#if ENABLE_BINARY_CATALOG
+#if !ENABLE_JSON_CATALOG
         internal class ResourceLocator : IResourceLocator
         {
             public struct Header
@@ -827,6 +834,7 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
                 public uint instanceProvider;
                 public uint sceneProvider;
                 public uint initObjectsArray;
+                public uint buildResultHash;
             }
 
             public struct KeyData
@@ -945,7 +953,7 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
             {
                 get
                 {
-                    var allLocs = new HashSet<IResourceLocation>();
+                    var allLocs = new HashSet<IResourceLocation>(new ResourceLocationComparer());
                     foreach (var kvp in keyData)
                     {
                         if (Locate(kvp.Key, null, out var locs))
@@ -1032,7 +1040,7 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
             }
         }
 
-        class AssetBundleRequestOptionsSerializationAdapter : BinaryStorageBuffer.ISerializationAdapter<AssetBundleRequestOptions>
+        internal class AssetBundleRequestOptionsSerializationAdapter : BinaryStorageBuffer.ISerializationAdapter<AssetBundleRequestOptions>
         {
             struct SerializedData
             {
@@ -1109,9 +1117,9 @@ namespace UnityEngine.AddressableAssets.ResourceLocators
                 var hash = Hash128.Parse(options.Hash);
 
                 // ensure the correct values for casting to smaller
-                short timeout = (short)Mathf.Clamp(options.Timeout, short.MinValue, short.MaxValue);
-                byte retryCount = options.RetryCount < 0 ? (byte)32 : (byte)Mathf.Clamp(options.RetryCount, 0, 128);
-                byte redirectLimit = (byte)Mathf.Clamp(options.RetryCount, 0, 128);
+                short timeout = (short)Mathf.Clamp(options.Timeout, 0, short.MaxValue);
+                byte retryCount = (byte)Mathf.Clamp(options.RetryCount, 0, 128);
+                byte redirectLimit = options.RedirectLimit < 0 ? (byte)32 : (byte)Mathf.Clamp(options.RedirectLimit, 0, 128);
 
                 var sd = new SerializedData
                 {

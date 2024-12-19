@@ -1,9 +1,4 @@
-using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Runtime.CompilerServices;
-using UnityEngine;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -145,20 +140,6 @@ namespace UnityEngine.AddressableAssets
         }
 
         /// <summary>
-        /// Retrieves the Addressables build platform that is being used.
-        /// </summary>
-        /// <returns>Returns the Addressables build platform that is being used.</returns>
-        [Obsolete("This API doesn't adapt to the addition of new platforms.  Use GetPlatformPathSubFolder instead.")]
-        public static AddressablesPlatform GetPlatform()
-        {
-#if UNITY_EDITOR
-            return GetAddressablesPlatformInternal(EditorUserBuildSettings.activeBuildTarget);
-#else
-            return GetAddressablesPlatformInternal(Application.platform);
-#endif
-        }
-
-        /// <summary>
         /// Retrieves the Addressables platform subfolder of the build platform that is being used.
         /// </summary>
         /// <returns>Returns the Addressables platform subfolder of the build platform that is being used.</returns>
@@ -170,16 +151,5 @@ namespace UnityEngine.AddressableAssets
             return GetAddressablesPlatformPathInternal(Application.platform);
 #endif
         }
-        
-#if UNITY_EDITOR
-        /// <summary>
-        /// Retrieves the Addressables platform subfolder of the provided build platform.
-        /// </summary>
-        /// <returns>Returns the Addressables platform subfolder of the provided build platform.</returns>
-        public static string GetPlatformPathSubFolder(BuildTarget buildTarget)
-        {
-            return GetAddressablesPlatformPathInternal(buildTarget);
-        }
-#endif
     }
 }

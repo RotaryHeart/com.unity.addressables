@@ -44,6 +44,19 @@ namespace UnityEngine.ResourceManagement.ResourceProviders
                 return bundle as T;
             }
 
+            internal static bool IsDownloadOnly(IList<object> results)
+            {
+                foreach (var dep in results)
+                {
+                    if (dep is AssetBundleResource { m_DownloadOnly: true })
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
             public void Start(ProvideHandle provideHandle)
             {
                 provideHandle.SetProgressCallback(ProgressCallback);
@@ -63,7 +76,14 @@ namespace UnityEngine.ResourceManagement.ResourceProviders
                     m_AssetBundle = bundleResource.GetAssetBundle();
                     if (m_AssetBundle == null)
                     {
-                        m_ProvideHandle.Complete<AssetBundle>(null, false, new Exception("Unable to load dependent bundle from location " + m_ProvideHandle.Location));
+#if UNITY_EDITOR
+                        // This more detailed error is only displayed in the Editor to help with debugging. It's not
+                        // an Editor only issue.
+                        if (IsDownloadOnly(deps))
+                            m_ProvideHandle.Complete<AssetBundle>(null, false, new Exception("Unable to load dependent bundle from location " + m_ProvideHandle.Location + ".\nRelease the handle returned by DownloadDependenciesAsync or call it with autoReleaseHandle set to true."));
+                        else
+#endif
+                            m_ProvideHandle.Complete<AssetBundle>(null, false, new Exception("Unable to load dependent bundle from location " + m_ProvideHandle.Location));
                         return;
                     }
 
@@ -95,15 +115,8 @@ namespace UnityEngine.ResourceManagement.ResourceProviders
                             CompleteOperation();
                         }
                         else
-#elif ENABLE_ASSETBUNDLE_SYNC
-                        if (true)
-                        {
-                            GetArrayResult(m_AssetBundle.LoadAssetWithSubAssets(assetPath, m_ProvideHandle.Type.GetElementType()));
-                            CompleteOperation();
-                        }
-                        else
 #endif
-						m_RequestOperation = m_AssetBundle.LoadAssetWithSubAssetsAsync(assetPath, m_ProvideHandle.Type.GetElementType());
+                            m_RequestOperation = m_AssetBundle.LoadAssetWithSubAssetsAsync(assetPath, m_ProvideHandle.Type.GetElementType());
                     }
                     else if (m_ProvideHandle.Type.IsGenericType && typeof(IList<>) == m_ProvideHandle.Type.GetGenericTypeDefinition())
                     {
@@ -114,15 +127,8 @@ namespace UnityEngine.ResourceManagement.ResourceProviders
                             CompleteOperation();
                         }
                         else
-#elif ENABLE_ASSETBUNDLE_SYNC
-                        if (true)
-                        {
-                            GetListResult(m_AssetBundle.LoadAssetWithSubAssets(assetPath, m_ProvideHandle.Type.GetGenericArguments()[0]));
-                            CompleteOperation();
-                        }
-                        else
 #endif
-						m_RequestOperation = m_AssetBundle.LoadAssetWithSubAssetsAsync(assetPath, m_ProvideHandle.Type.GetGenericArguments()[0]);
+                            m_RequestOperation = m_AssetBundle.LoadAssetWithSubAssetsAsync(assetPath, m_ProvideHandle.Type.GetGenericArguments()[0]);
                     }
                     else
                     {
@@ -131,13 +137,6 @@ namespace UnityEngine.ResourceManagement.ResourceProviders
                             subObjectName = subKey;
 #if !UNITY_2021_1_OR_NEWER
                             if (AsyncOperationHandle.IsWaitingForCompletion)
-                            {
-                                GetAssetSubObjectResult(m_AssetBundle.LoadAssetWithSubAssets(mainPath, m_ProvideHandle.Type));
-                                CompleteOperation();
-                            }
-                            else
-#elif ENABLE_ASSETBUNDLE_SYNC
-							if (true)
                             {
                                 GetAssetSubObjectResult(m_AssetBundle.LoadAssetWithSubAssets(mainPath, m_ProvideHandle.Type));
                                 CompleteOperation();
@@ -155,13 +154,6 @@ namespace UnityEngine.ResourceManagement.ResourceProviders
                                 CompleteOperation();
                             }
                             else
-#elif ENABLE_ASSETBUNDLE_SYNC
-                            if (true)
-                            {
-                                GetAssetResult(m_AssetBundle.LoadAsset(assetPath, m_ProvideHandle.Type));
-                                CompleteOperation();
-                            }
-                            else
 #endif
                                 m_RequestOperation = m_AssetBundle.LoadAssetAsync(assetPath, m_ProvideHandle.Type);
                         }
@@ -173,10 +165,9 @@ namespace UnityEngine.ResourceManagement.ResourceProviders
                             ActionComplete(m_RequestOperation);
                         else
                         {
-#if ENABLE_ADDRESSABLE_PROFILER
                             if (UnityEngine.Profiling.Profiler.enabled && m_ProvideHandle.IsValid)
                                 Profiling.ProfilerRuntime.AddAssetOperation(m_ProvideHandle, Profiling.ContentStatus.Loading);
-#endif
+
                             m_RequestOperation.completed += ActionComplete;
                         }
                     }
@@ -245,10 +236,8 @@ namespace UnityEngine.ResourceManagement.ResourceProviders
 
             void CompleteOperation()
             {
-#if ENABLE_ADDRESSABLE_PROFILER
                 if (UnityEngine.Profiling.Profiler.enabled && m_Result != null && m_ProvideHandle.IsValid)
                     Profiling.ProfilerRuntime.AddAssetOperation(m_ProvideHandle, Profiling.ContentStatus.Active);
-#endif
 
                 Exception e = m_Result == null
                     ? new Exception($"Unable to load asset of type {m_ProvideHandle.Type} from location {m_ProvideHandle.Location}.")

@@ -18,7 +18,7 @@ namespace AddressableAssetsIntegrationTests
     {
         Action<AsyncOperationHandle, Exception> m_prevHandler;
 
-        protected virtual int ExpectedOpCount { get { return 2; } }
+        protected virtual int ExpectedOpCount { get { return 3; } }
         protected virtual int ExpectedAssetBundlesLoadedCount { get { return 0; } }
 
         protected virtual bool UseUnityWebRequestForLocalBundles { get { return false; } }
@@ -302,7 +302,7 @@ namespace AddressableAssetsIntegrationTests
             // Setup
             yield return Init();
 
-            if (TypeName == "BuildScriptFastMode" || TypeName == "BuildScriptVirtualMode")
+            if (TypeName == "BuildScriptFastMode")
             {
                 Assert.Ignore($"Skipping test {nameof(AddressablesImpl_DownloadDependenciesAsync_CanDownloadDependenciesFromKey)} for {TypeName}");
             }
@@ -319,6 +319,42 @@ namespace AddressableAssetsIntegrationTests
             // Cleanup
             op.Release();
         }
+
+        [UnityTest]
+        public IEnumerator AddressablesImpl_DownloadDependenciesAsync_CanLoadFromCompletionEvent()
+        {
+            // Setup
+            yield return Init();
+
+            if (TypeName == "BuildScriptFastMode")
+            {
+                Assert.Ignore($"Skipping test {nameof(AddressablesImpl_DownloadDependenciesAsync_CanLoadFromCompletionEvent)} for {TypeName}");
+            }
+#if ENABLE_CACHING
+            Caching.ClearCache();
+#endif
+            AsyncOperationHandle op = m_Addressables.DownloadDependenciesAsync(m_PrefabKeysList[0]);
+
+            AsyncOperationStatus loadStatus = AsyncOperationStatus.None;
+
+            op.Completed += (o) =>
+            {
+                m_Addressables.LoadAssetAsync<GameObject>(m_PrefabKeysList[0]).Completed += (o2) =>
+                {
+                    loadStatus = o2.Status;
+                    o2.Release();
+                };
+            };
+            yield return op;
+            while (loadStatus == AsyncOperationStatus.None)
+                yield return null;
+
+            Assert.IsTrue(loadStatus == AsyncOperationStatus.Succeeded);
+
+            // Cleanup
+            op.Release();
+        }
+
 
         [UnityTest]
         public IEnumerator AddressablesImpl_DownloadDependenciesAsync_CantDownloadWhenGetResourceLocFailsKey()
@@ -366,7 +402,7 @@ namespace AddressableAssetsIntegrationTests
         public IEnumerator AddressablesImpl_DownloadDependenciesAsync_CanDoWithChainKey()
         {
             // Setup
-            if (TypeName == "BuildScriptFastMode" || TypeName == "BuildScriptVirtualMode")
+            if (TypeName == "BuildScriptFastMode")
             {
                 Assert.Ignore($"Skipping test {nameof(AddressablesImpl_DownloadDependenciesAsync_CanDoWithChainKey)} for {TypeName}");
             }
@@ -393,7 +429,7 @@ namespace AddressableAssetsIntegrationTests
             // Setup
             yield return Init();
 
-            if (TypeName == "BuildScriptFastMode" || TypeName == "BuildScriptVirtualMode")
+            if (TypeName == "BuildScriptFastMode")
             {
                 Assert.Ignore($"Skipping test {nameof(AddressablesImpl_DownloadDependenciesAsync_CanDownloadDependenciesFromOpHandle)} for {TypeName}");
             }
@@ -431,7 +467,7 @@ namespace AddressableAssetsIntegrationTests
             // Setup
             yield return Init();
 
-            if (TypeName == "BuildScriptFastMode" || TypeName == "BuildScriptVirtualMode")
+            if (TypeName == "BuildScriptFastMode")
             {
                 Assert.Ignore($"Skipping test {nameof(AddressablesImpl_DownloadDependenciesAsync_CanDoWithChainOpHandle)} for {TypeName}");
             }
@@ -459,7 +495,7 @@ namespace AddressableAssetsIntegrationTests
             // Setup
             yield return Init();
 
-            if (TypeName == "BuildScriptFastMode" || TypeName == "BuildScriptVirtualMode")
+            if (TypeName == "BuildScriptFastMode")
             {
                 Assert.Ignore($"Skipping test {nameof(AddressablesImpl_DownloadDependenciesAsync_CanDownloadDependenciesFromObjectList)} for {TypeName}");
             }
@@ -482,7 +518,7 @@ namespace AddressableAssetsIntegrationTests
         {
             // Setup
             yield return Init();
-            if (TypeName == "BuildScriptFastMode" || TypeName == "BuildScriptVirtualMode")
+            if (TypeName == "BuildScriptFastMode")
             {
                 Assert.Ignore($"Skipping test {nameof(AddressablesImpl_DownloadDependenciesAsync_CanDownloadDependenciesWithChainFromObjectList)} for {TypeName}");
             }

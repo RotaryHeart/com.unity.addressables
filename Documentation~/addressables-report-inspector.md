@@ -1,10 +1,6 @@
-﻿---
-uid: addressables-report-inspector-reference
----
+﻿# Addressables Report Inspector reference
 
-# Addressables Report Inspector reference
-
-You can use the Inspector to view in depth information about any given asset or AssetBundle. When you select an asset or AssetBundle in [the Explore tab](AddressablesReportExploreTab.md) or [the Potential Issues tab](AddressablesReportPotentialIssuesTab.md) the Inspector panel displays information about the selected asset or AssetBundle.
+You can use the Inspector to view in depth information about any given asset or AssetBundle. When you select an asset or AssetBundle in [the Explore tab](AddressablesReportOverview.md#explore-tab) or [the Potential Issues tab](AddressablesReportPotentialIssuesTab.md) the Inspector panel displays information about the selected asset or AssetBundle.
 
 ![](images/addressables-report-inspector.png)
 

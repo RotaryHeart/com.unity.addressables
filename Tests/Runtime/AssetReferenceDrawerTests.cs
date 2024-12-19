@@ -73,7 +73,7 @@ namespace AssetReferenceDrawerTests
             Texture tex = op.Result;
             bool isValid = uiLabelRest.ValidateAsset(tex);
             Assert.IsTrue(isValid);
-            m_Addressables.Release(op);
+            op.Release();
         }
 
 #if UNITY_EDITOR
@@ -154,14 +154,6 @@ namespace AssetReferenceDrawerTests
         protected override TestBuildScriptMode BuildScriptMode
         {
             get { return TestBuildScriptMode.Fast; }
-        }
-    }
-
-    class AssetReferenceDrawerTests_VirtualMode : AssetReferenceDrawerTests
-    {
-        protected override TestBuildScriptMode BuildScriptMode
-        {
-            get { return TestBuildScriptMode.Virtual; }
         }
     }
 

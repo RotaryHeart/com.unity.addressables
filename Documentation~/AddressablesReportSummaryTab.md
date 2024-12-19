@@ -1,10 +1,6 @@
-﻿---
-uid: addressables-report-summary
----
+﻿# The Summary Tab
 
-# The Summary Tab
-
-![](images/BuildReportSummaryView.png)
+![](../../images/BuildReportSummaryView.png)
 
 The Summary Tab contains general information about the currently selected build report, along with information about any detected potential issues within the build. This information includes the locations of the catalogs created by the build, which profile the current build was built with, how long the build took, and the version of both the Addressables package and the Unity Editor that the build was created with.
 

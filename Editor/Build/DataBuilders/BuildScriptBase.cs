@@ -2,10 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+#if UNITY_2022_2_OR_NEWER
+using UnityEditor.AddressableAssets.BuildReportVisualizer;
+#endif
 using UnityEditor.AddressableAssets.Settings;
 using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEditor.Build.Pipeline.Interfaces;
 using UnityEditor.Build.Pipeline.Utilities;
+using UnityEditor.Experimental;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.AddressableAssets.Initialization;
@@ -13,6 +17,8 @@ using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.ResourceManagement.Util;
 using UnityEngine.Serialization;
+using System.Reflection;
+
 
 namespace UnityEditor.AddressableAssets.Build.DataBuilders
 {
@@ -22,18 +28,23 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
     public class BuildScriptBase : ScriptableObject, IDataBuilder
     {
         /// <summary>
+        /// Static part of the builtin bundle filename.
+        /// </summary>
+        public const string BuiltInBundleBaseName = "_unitybuiltinassets";
+
+        /// <summary>
         /// The type of instance provider to create for the Addressables system.
         /// </summary>
         [FormerlySerializedAs("m_InstanceProviderType")]
         [SerializedTypeRestrictionAttribute(type = typeof(IInstanceProvider))]
-        public SerializedType instanceProviderType = new SerializedType() {Value = typeof(InstanceProvider)};
+        public SerializedType instanceProviderType = new SerializedType() { Value = typeof(InstanceProvider) };
 
         /// <summary>
         /// The type of scene provider to create for the addressables system.
         /// </summary>
         [FormerlySerializedAs("m_SceneProviderType")]
         [SerializedTypeRestrictionAttribute(type = typeof(ISceneProvider))]
-        public SerializedType sceneProviderType = new SerializedType() {Value = typeof(SceneProvider)};
+        public SerializedType sceneProviderType = new SerializedType() { Value = typeof(SceneProvider) };
 
         /// <summary>
         /// Stores the logged information of all the build tasks.
@@ -153,10 +164,10 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                     if (assetGroup == null)
                         continue;
 
-                    if (assetGroup.Schemas.Find((x) => x.GetType() == typeof(PlayerDataGroupSchema)) &&
-                        assetGroup.Schemas.Find((x) => x.GetType() == typeof(BundledAssetGroupSchema)))
+                    var error = ErrorCheckBundleSettings(assetGroup, aaContext);
+                    if (error != string.Empty)
                     {
-                        return $"Addressable group {assetGroup.Name} cannot have both a {typeof(PlayerDataGroupSchema).Name} and a {typeof(BundledAssetGroupSchema).Name}";
+                        return error;
                     }
 
                     EditorUtility.DisplayProgressBar($"Processing Addressable Group", assetGroup.Name, (float)index / aaContext.Settings.groups.Count);
@@ -166,13 +177,55 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
                         return errorString;
                     }
                 }
-            } finally
+            }
+            finally
             {
                 EditorUtility.ClearProgressBar();
             }
 
             return string.Empty;
         }
+
+
+        internal static string ErrorCheckBundleSettings(AddressableAssetGroup assetGroup, AddressableAssetsBuildContext aaContext)
+        {
+            if (!assetGroup.HasSchema<BundledAssetGroupSchema>())
+                return string.Empty;
+
+            var message = string.Empty;
+            var settings = aaContext.Settings;
+            var schema = assetGroup.GetSchema<BundledAssetGroupSchema>();
+
+            string buildPath = settings.profileSettings.GetValueById(settings.activeProfileId, schema.BuildPath.Id);
+            string loadPath = settings.profileSettings.GetValueById(settings.activeProfileId, schema.LoadPath.Id);
+
+            bool buildLocal = AddressableAssetUtility.StringContains(buildPath, "[UnityEngine.AddressableAssets.Addressables.BuildPath]", StringComparison.Ordinal);
+            bool loadLocal = AddressableAssetUtility.StringContains(loadPath, "{UnityEngine.AddressableAssets.Addressables.RuntimePath}", StringComparison.Ordinal);
+
+            if (buildLocal && !loadLocal)
+            {
+                message = "BuildPath for group '" + assetGroup.Name + "' is set to the dynamic-lookup version of StreamingAssets, but LoadPath is not. \n";
+            }
+            else if (!buildLocal && loadLocal)
+            {
+                message = "LoadPath for group " + assetGroup.Name +
+                          " is set to the dynamic-lookup version of StreamingAssets, but BuildPath is not. These paths must both use the dynamic-lookup, or both not use it. \n";
+            }
+
+            if (!string.IsNullOrEmpty(message))
+            {
+                message += "BuildPath: '" + buildPath + "'\n";
+                message += "LoadPath: '" + loadPath + "'";
+            }
+
+            if (schema.Compression == BundledAssetGroupSchema.BundleCompressionMode.LZMA && (buildLocal || loadLocal))
+            {
+                Debug.LogWarningFormat("Bundle compression is set to LZMA, but group {0} uses local content.", assetGroup.Name);
+            }
+
+            return message;
+        }
+
 
         /// <summary>
         /// Build processing of an individual group.
@@ -193,36 +246,6 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
         public virtual bool CanBuildData<T>() where T : IDataBuilderResult
         {
             return false;
-        }
-
-        /// <summary>
-        /// Utility method for creating locations from player data.
-        /// </summary>
-        /// <param name="playerDataSchema">The schema for the group.</param>
-        /// <param name="assetGroup">The group to extract the locations from.</param>
-        /// <param name="locations">The list of created locations to fill in.</param>
-        /// <param name="providerTypes">Any unknown provider types are added to this set in order to ensure they are not stripped.</param>
-        /// <returns>True if any legacy locations were created.  This is used by the build scripts to determine if a legacy provider is needed.</returns>
-        protected bool CreateLocationsForPlayerData(PlayerDataGroupSchema playerDataSchema, AddressableAssetGroup assetGroup, List<ContentCatalogDataEntry> locations, HashSet<Type> providerTypes)
-        {
-            bool needsLegacyProvider = false;
-            if (playerDataSchema != null && (playerDataSchema.IncludeBuildSettingsScenes || playerDataSchema.IncludeResourcesFolders))
-            {
-                var entries = new List<AddressableAssetEntry>();
-                assetGroup.GatherAllAssets(entries, true, true, false);
-                foreach (var a in entries.Where(e => e.IsInSceneList || e.IsInResources))
-                {
-                    if (!playerDataSchema.IncludeBuildSettingsScenes && a.IsInSceneList)
-                        continue;
-                    if (!playerDataSchema.IncludeResourcesFolders && a.IsInResources)
-                        continue;
-                    a.CreateCatalogEntries(locations, false, a.IsScene ? "" : typeof(LegacyResourcesProvider).FullName, null, null, providerTypes);
-                    if (!a.IsScene)
-                        needsLegacyProvider = true;
-                }
-            }
-
-            return needsLegacyProvider;
         }
 
         /// <summary>
@@ -308,6 +331,83 @@ namespace UnityEditor.AddressableAssets.Build.DataBuilders
         public virtual bool IsDataBuilt()
         {
             return false;
+        }
+
+
+        /// <summary>
+        /// Copies the content state binary file from the temp directory to its final location and registers it in the
+        /// file registry and build results.
+        /// </summary>
+        /// <param name="tempPath">Temporary location of the content state file.</param>
+        /// <param name="contentStatePath">Destination location of the content state file.</param>
+        /// <param name="builderInput">The builderInput object used in the build.</param>
+        /// <param name="addrResult">The build data result.</param>
+        public virtual void CopyAndRegisterContentState(string tempPath, string contentStatePath, AddressablesDataBuilderInput builderInput, AddressablesPlayerBuildResult addrResult)
+        {
+            try
+            {
+                string directory = Path.GetDirectoryName(contentStatePath);
+                if (!Directory.Exists(directory))
+                    Directory.CreateDirectory(directory);
+                if (File.Exists(contentStatePath))
+                    File.Delete(contentStatePath);
+
+                File.Copy(tempPath, contentStatePath, true);
+                if (addrResult != null)
+                    addrResult.ContentStateFilePath = contentStatePath;
+                builderInput.Registry.AddFile(contentStatePath);
+            }
+            catch (UnauthorizedAccessException uae)
+            {
+                if (!AddressableAssetUtility.IsVCAssetOpenForEdit(contentStatePath))
+                    Debug.LogErrorFormat("Cannot access the file {0}. It may be locked by version control.",
+                        contentStatePath);
+                else
+                    Debug.LogException(uae);
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
+        }
+
+        /// <summary>
+        /// Notifies the user about the existence of the Addressables Report
+        /// </summary>
+        protected virtual void NotifyUserAboutBuildReport()
+        {
+            bool buildReportSettingCheck = ProjectConfigData.UserHasBeenInformedAboutBuildReportSettingPreBuild;
+            if (!buildReportSettingCheck && !Application.isBatchMode && !ProjectConfigData.GenerateBuildLayout)
+            {
+                bool turnOnBuildLayout = EditorUtility.DisplayDialog("Addressables Build Report",
+                    "There's a new Addressables Build Report you can check out after your content build.  " +
+                    "However, this requires that 'Debug Build Layout' is turned on.  The setting can be found in Edit > Preferences > Addressables.  Would you like to turn it on?",
+                    "Yes", "No");
+                if (turnOnBuildLayout)
+                    ProjectConfigData.GenerateBuildLayout = true;
+                ProjectConfigData.UserHasBeenInformedAboutBuildReportSettingPreBuild = true;
+            }
+        }
+
+        /// <summary>
+        /// Displays the Addressables Report window
+        /// </summary>
+        protected virtual void DisplayBuildReport()
+        {
+            if (!Application.isBatchMode && ProjectConfigData.AutoOpenAddressablesReport && ProjectConfigData.GenerateBuildLayout)
+            {
+                BuildReportWindow.ShowWindowAfterBuild();
+            }
+        }
+
+        /// <summary>
+        /// Clears content update notifications from teh groups window
+        /// </summary>
+        /// <param name="groups">A list of groups that were built</param>
+        protected virtual void ClearContentUpdateNotifications(List<AddressableAssetGroup> groups)
+        {
+            foreach (var group in groups)
+                ContentUpdateScript.ClearContentUpdateNotifications(group);
         }
     }
 }

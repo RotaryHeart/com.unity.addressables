@@ -7,12 +7,14 @@ using UnityEngine;
 using UnityEngine.AddressableAssets;
 using System.Text;
 using System.Net.Http;
+using UnityEditor.AddressableAssets.Build;
 
 #if (ENABLE_CCD && UNITY_2019_4_OR_NEWER)
 using Unity.Services.Core;
 using Unity.Services.Ccd.Management;
 using Unity.Services.Ccd.Management.Http;
 using Unity.Services.Ccd.Management.Models;
+using UnityEditor.AddressableAssets.Build;
 #endif
 
 namespace UnityEditor.AddressableAssets.Settings
@@ -26,6 +28,7 @@ namespace UnityEditor.AddressableAssets.Settings
         const string DEFAULT_NAME = "ProfileDataSourceSettings";
         const string CONTENT_RANGE_HEADER = "Content-Range";
         static string DEFAULT_SETTING_PATH = $"{DEFAULT_PATH}/{DEFAULT_NAME}.asset";
+        internal const string ENVIRONMENT_NAME = "EnvironmentName";
 
 #if ENABLE_CCD
         internal const string MANAGED_ENVIRONMENT = "ManagedEnvironment";
@@ -100,7 +103,7 @@ namespace UnityEditor.AddressableAssets.Settings
         internal List<Environment> environments = new List<Environment>();
 
         [SerializeField]
-        internal Environment currentEnvironment;
+        private Environment currentEnvironment;
 
         /// <summary>
         /// Creates, if needed, and returns the profile data source settings for the project
@@ -161,7 +164,6 @@ namespace UnityEditor.AddressableAssets.Settings
         public static List<ProfileGroupType> CreateDefaultGroupTypes() => new List<ProfileGroupType>
         {
             CreateBuiltInGroupType(),
-            CreateEditorHostedGroupType(),
 #if ENABLE_CCD
             CreateCcdManagerGroupType()
 #endif
@@ -175,14 +177,6 @@ namespace UnityEditor.AddressableAssets.Settings
             return defaultBuiltIn;
         }
 
-        static ProfileGroupType CreateEditorHostedGroupType()
-        {
-            ProfileGroupType defaultRemote = new ProfileGroupType(AddressableAssetSettings.EditorHostedGroupTypePrefix);
-            defaultRemote.AddVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kBuildPath, AddressableAssetSettings.kRemoteBuildPathValue));
-            defaultRemote.AddVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kLoadPath, AddressableAssetSettings.RemoteLoadPathValue));
-            return defaultRemote;
-        }
-
 #if ENABLE_CCD
         static ProfileGroupType CreateCcdManagerGroupType()
         {
@@ -192,6 +186,7 @@ namespace UnityEditor.AddressableAssets.Settings
             ProfileGroupType defaultCcdManager = new ProfileGroupType(AddressableAssetSettings.CcdManagerGroupTypePrefix);
             defaultCcdManager.AddVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kBuildPath, buildPath));
             defaultCcdManager.AddVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kLoadPath, loadPath));
+            defaultCcdManager.AddVariable(new ProfileGroupType.GroupTypeVariable(ENVIRONMENT_NAME, "production"));
             return defaultCcdManager;
         }
 #endif
@@ -250,8 +245,8 @@ namespace UnityEditor.AddressableAssets.Settings
             {
                 Addressables.Log("Syncing CCD Environments, Buckets, and Badges.");
             }
-            
-            var profileGroupTypes = new List<ProfileGroupType>();
+
+            settings.profileGroupTypes.Clear();
 
             var environments = await GetEnvironments();
 
@@ -260,14 +255,15 @@ namespace UnityEditor.AddressableAssets.Settings
                 EditorUtility.DisplayProgressBar("Syncing Profile Data Sources", "Fetching Environments", 0);
                 Addressables.Log($"Successfully fetched {environments.Count} environments.");
             }
-            profileGroupTypes.AddRange(CreateDefaultGroupTypes());
+            settings.profileGroupTypes.AddRange(CreateDefaultGroupTypes());
 
             try
             {
                 var envProgress = 1;
                 foreach (var environment in environments)
                 {
-                    var bucketDictionary = await GetAllBucketsAsync(environment.id);
+                    CcdBuildEvents.Instance.ConfigureCcdManagement(AddressableAssetSettingsDefaultObject.Settings, environment.id);
+                    var bucketDictionary = await GetAllBucketsAsync();
                     var bucketProgress = 1;
                     foreach (var kvp in bucketDictionary)
                     {
@@ -279,35 +275,12 @@ namespace UnityEditor.AddressableAssets.Settings
                         }
 
                         var badges = await GetAllBadgesAsync(bucket.Id.ToString());
-                        if (badges.Count == 0) badges.Add(new CcdBadge(name: "latest"));
-                        foreach (var badge in badges)
-                        {
-                            var groupType =
- new ProfileGroupType($"CCD{ProfileGroupType.k_PrefixSeparator}{projectId}{ProfileGroupType.k_PrefixSeparator}{environment.id}{ProfileGroupType.k_PrefixSeparator}{bucket.Id}{ProfileGroupType.k_PrefixSeparator}{badge.Name}");
-                            groupType.AddVariable(new ProfileGroupType.GroupTypeVariable($"{nameof(CcdBucket)}{nameof(CcdBucket.Name)}", bucket.Name));
-                            groupType.AddVariable(new ProfileGroupType.GroupTypeVariable($"{nameof(CcdBucket)}{nameof(CcdBucket.Id)}", bucket.Id.ToString()));
-                            groupType.AddVariable(new ProfileGroupType.GroupTypeVariable($"{nameof(CcdBadge)}{nameof(CcdBadge.Name)}", badge.Name));
-                            groupType.AddVariable(new ProfileGroupType.GroupTypeVariable(nameof(CcdBucket.Attributes.PromoteOnly), bucket.Attributes.PromoteOnly.ToString()));
-
-                            //Adding environment stub here
-                            groupType.AddVariable(new ProfileGroupType.GroupTypeVariable($"{nameof(Environment)}{nameof(Environment.name)}", environment.name));
-                            groupType.AddVariable(new ProfileGroupType.GroupTypeVariable($"{nameof(Environment)}{nameof(Environment.id)}", environment.id));
-
-                            string buildPath = $"{AddressableAssetSettings.kCCDBuildDataPath}/{environment.id}/{bucket.Id}/{badge.Name}";
-                            groupType.AddVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kBuildPath, buildPath));
-
-                            string loadPath =
-$"https://{projectId}{m_CcdClientBasePath}/client_api/v1/environments/{environment.name}/buckets/{bucket.Id}/release_by_badge/{badge.Name}/entry_by_path/content/?path=";
-                            groupType.AddVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kLoadPath, loadPath));
-
-                            profileGroupTypes.Add(groupType);
-                        }
+                        AddGroupTypeForRemoteBucket(projectId, environment.id, environment.name, bucket, badges);
                         bucketProgress++;
                     }
                     envProgress++;
                 }
 
-                settings.profileGroupTypes = profileGroupTypes;
                 settings.environments = environments.ToList();
                 if (showInfoLog) Addressables.Log("Successfully synced CCD Buckets and Badges.");
                 EditorUtility.SetDirty(settings);
@@ -325,9 +298,37 @@ $"https://{projectId}{m_CcdClientBasePath}/client_api/v1/environments/{environme
             return settings.profileGroupTypes;
         }
 
-        internal static async Task<Dictionary<Guid, CcdBucket>> GetAllBucketsAsync(string environment)
+        internal static void AddGroupTypeForRemoteBucket(string projectId, string environmentId, string environmentName, CcdBucket bucket, List<CcdBadge> badges)
         {
-            CcdManagement.SetEnvironmentId(environment);
+            var settings = GetSettings();
+            if (badges.Count == 0) badges.Add(new CcdBadge(name: "latest"));
+            foreach (var badge in badges)
+            {
+                var groupType =
+                    new ProfileGroupType(
+                        $"CCD{ProfileGroupType.k_PrefixSeparator}{projectId}{ProfileGroupType.k_PrefixSeparator}{environmentId}{ProfileGroupType.k_PrefixSeparator}{bucket.Id}{ProfileGroupType.k_PrefixSeparator}{badge.Name}");
+                groupType.AddVariable(new ProfileGroupType.GroupTypeVariable($"{nameof(CcdBucket)}{nameof(CcdBucket.Name)}", bucket.Name));
+                groupType.AddVariable(new ProfileGroupType.GroupTypeVariable($"{nameof(CcdBucket)}{nameof(CcdBucket.Id)}", bucket.Id.ToString()));
+                groupType.AddVariable(new ProfileGroupType.GroupTypeVariable($"{nameof(CcdBadge)}{nameof(CcdBadge.Name)}", badge.Name));
+                groupType.AddVariable(new ProfileGroupType.GroupTypeVariable(nameof(CcdBucket.Attributes.PromoteOnly), bucket.Attributes.PromoteOnly.ToString()));
+
+                //Adding environment stub here
+                groupType.AddVariable(new ProfileGroupType.GroupTypeVariable($"{nameof(Environment)}{nameof(Environment.name)}", environmentName));
+                groupType.AddVariable(new ProfileGroupType.GroupTypeVariable($"{nameof(Environment)}{nameof(Environment.id)}", environmentId));
+
+                string buildPath = $"{AddressableAssetSettings.kCCDBuildDataPath}/{environmentId}/{bucket.Id}/{badge.Name}";
+                groupType.AddVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kBuildPath, buildPath));
+
+                string loadPath =
+                    $"https://{projectId}{m_CcdClientBasePath}/client_api/v1/environments/{environmentName}/buckets/{bucket.Id}/release_by_badge/{badge.Name}/entry_by_path/content/?path=";
+                groupType.AddVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kLoadPath, loadPath));
+
+                settings.profileGroupTypes.Add(groupType);
+            }
+    }
+
+        internal static async Task<Dictionary<Guid, CcdBucket>> GetAllBucketsAsync()
+        {
             int page = 1;
             bool loop = true;
             List<CcdBucket> buckets = new List<CcdBucket>();
@@ -428,21 +429,59 @@ $"https://{projectId}{m_CcdClientBasePath}/client_api/v1/environments/{environme
             }
         }
 
-        internal void SetEnvironmentById(string id)
+        internal void SetEnvironmentById(AddressableAssetProfileSettings profileSettings, string profileId, string environmentId)
         {
-            Environment env = environments.Where(x => x.id == id).FirstOrDefault();
+            var environmentName = profileSettings.CreateValue(ENVIRONMENT_NAME, "");
+
+            Environment env = environments.FirstOrDefault(x => x.id == environmentId);
             if (env != null)
             {
-                currentEnvironment = env;
+                profileSettings.SetValue(profileId, ENVIRONMENT_NAME, env.name);
             }
             else
             {
-                throw new Exception("Unable to find environment by id");
+                throw new Exception($"Unable to find environment by id {environmentId}");
             }
+        }
+
+        internal string GetEnvironmentName(AddressableAssetProfileSettings profileSettings, string profileId)
+        {
+            var profileEnvironmentName = profileSettings.GetValueByName(profileId, ENVIRONMENT_NAME);
+            if (profileEnvironmentName != null)
+            {
+                return profileEnvironmentName;
+            }
+
+            // this is here for backwards compatability
+            if (currentEnvironment != null && !String.IsNullOrEmpty(currentEnvironment.name))
+            {
+                profileSettings.CreateValue(ENVIRONMENT_NAME, "");
+                profileSettings.SetValue(profileId, ENVIRONMENT_NAME, currentEnvironment.name);
+                return currentEnvironment.name;
+            }
+            throw new Exception($"Unable to find environment for profile {profileSettings.GetProfile(profileId).profileName}.");
+        }
+
+        internal string GetEnvironmentId(AddressableAssetProfileSettings profileSettings, string profileId)
+        {
+            var environmentName = GetEnvironmentName(profileSettings, profileId);
+            Environment env = environments.Where(x => x.name == environmentName).FirstOrDefault();
+            if (env == null)
+            {
+                throw new Exception($"Unable to find remote environment {environmentName}.");
+            }
+
+            return env.id;
         }
 #endif
         void ISerializationCallbackReceiver.OnBeforeSerialize()
         {
+            profileGroupTypes.Sort((x, y) => string.CompareOrdinal(x.GroupTypePrefix, y.GroupTypePrefix));
+            foreach (var profileGroupType in profileGroupTypes)
+            {
+                profileGroupType.Variables.Sort((x, y) => string.CompareOrdinal(x.Suffix,y.Suffix));
+            }
+            environments.Sort((x, y) => string.CompareOrdinal(x.id, y.id));
         }
 
         void ISerializationCallbackReceiver.OnAfterDeserialize()
@@ -458,18 +497,6 @@ $"https://{projectId}{m_CcdClientBasePath}/client_api/v1/environments/{environme
                     AddressableAssetSettings.kLocalBuildPathValue));
                 types[0].AddOrUpdateVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kLoadPath,
                     AddressableAssetSettings.kLocalLoadPathValue));
-            }
-
-            // Editor Hosted
-            types = GetGroupTypesByPrefix(AddressableAssetSettings.EditorHostedGroupTypePrefix);
-            if (types.Count == 0)
-                profileGroupTypes.Add(CreateEditorHostedGroupType());
-            else
-            {
-                types[0].AddOrUpdateVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kBuildPath,
-                    AddressableAssetSettings.kRemoteBuildPathValue));
-                types[0].AddOrUpdateVariable(new ProfileGroupType.GroupTypeVariable(AddressableAssetSettings.kLoadPath,
-                    AddressableAssetSettings.RemoteLoadPathValue));
             }
         }
 

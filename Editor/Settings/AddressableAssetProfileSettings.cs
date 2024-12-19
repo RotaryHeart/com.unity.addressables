@@ -15,7 +15,7 @@ namespace UnityEditor.AddressableAssets.Settings
     /// Contains user defined variables to control build parameters.
     /// </summary>
     [Serializable]
-    public class AddressableAssetProfileSettings
+    public class AddressableAssetProfileSettings : ISerializationCallbackReceiver
     {
         internal delegate string ProfileStringEvaluationDelegate(string key);
 
@@ -34,7 +34,7 @@ namespace UnityEditor.AddressableAssets.Settings
         }
 
         [Serializable]
-        internal class BuildProfile
+        internal class BuildProfile : ISerializationCallbackReceiver
         {
             [Serializable]
             internal class ProfileEntry
@@ -197,6 +197,15 @@ namespace UnityEditor.AddressableAssets.Settings
                     values[i].value = val;
                 m_CurrentHash = default;
             }
+
+            public void OnBeforeSerialize()
+            {
+                m_Values.Sort((a, b) => string.CompareOrdinal(a.id, b.id));
+            }
+
+            public void OnAfterDeserialize()
+            {
+            }
         }
 
         internal void OnAfterDeserialize(AddressableAssetSettings settings)
@@ -228,7 +237,7 @@ namespace UnityEditor.AddressableAssets.Settings
         {
             [FormerlySerializedAs("m_id")]
             [SerializeField]
-            string m_Id;
+            internal string m_Id;
 
             /// <summary>
             /// The unique ID set to identify a specific profile.
@@ -307,7 +316,7 @@ namespace UnityEditor.AddressableAssets.Settings
             /// </summary>
             /// <param name="entryId">The unique ID for this ProfileIdData</param>
             /// <param name="entryName">The name of the ProfileIdData.  ProfileIdData names should be unique in a given AddressableAssetProfileSettings.</param>
-            /// <param name="inline">False by default, this informs the BuildProifleSettingsEditor on if it should evaluate the ProfileIdData directly (true) 
+            /// <param name="inline">False by default, this informs the BuildProifleSettingsEditor on if it should evaluate the ProfileIdData directly (true)
             /// or get the value by Id first before evaluation (false).</param>
             public ProfileIdData(string entryId, string entryName, bool inline)
             {
@@ -476,7 +485,7 @@ namespace UnityEditor.AddressableAssets.Settings
                 CreateValue(AddressableAssetSettings.kLocalBuildPath, AddressableAssetSettings.kLocalBuildPathValue);
                 CreateValue(AddressableAssetSettings.kLocalLoadPath, AddressableAssetSettings.kLocalLoadPathValue);
                 CreateValue(AddressableAssetSettings.kRemoteBuildPath, AddressableAssetSettings.kRemoteBuildPathValue);
-                CreateValue(AddressableAssetSettings.kRemoteLoadPath, AddressableAssetSettings.RemoteLoadPathValue);
+                CreateValue(AddressableAssetSettings.kRemoteLoadPath, AddressableAssetSettings.kRemoteLoadPathValue);
             }
 
             return GetDefaultProfileId();
@@ -490,12 +499,36 @@ namespace UnityEditor.AddressableAssets.Settings
             return null;
         }
 
-        BuildProfile GetDefaultProfile()
+        internal BuildProfile GetDefaultProfile()
         {
-            BuildProfile profile = null;
+            BuildProfile defaultProfile = null;
             if (m_Profiles.Count > 0)
-                profile = m_Profiles[0];
-            return profile;
+            {
+                if (m_Profiles[0].profileName != k_RootProfileName)
+                {
+                    int rootProfileIndex = -1;
+                    for (int i = 0; i < m_Profiles.Count; i++)
+                    {
+                        if (m_Profiles[i].profileName == k_RootProfileName)
+                        {
+                            rootProfileIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (rootProfileIndex != -1)
+                    {
+                        BuildProfile rootProfile = m_Profiles[rootProfileIndex];
+                        m_Profiles[rootProfileIndex] = m_Profiles[0];
+                        m_Profiles[0] = rootProfile;
+
+                        defaultProfile = rootProfile;
+                    }
+                }
+                else
+                    defaultProfile = m_Profiles[0];
+            }
+            return defaultProfile;
         }
 
         bool ValidateProfiles()
@@ -889,6 +922,36 @@ namespace UnityEditor.AddressableAssets.Settings
             {
                 profile.SetValueById(newVarId, profile.GetValueById(oldVarId));
                 SetDirty(AddressableAssetSettings.ModificationEvent.ProfileModified, profile, true);
+            }
+        }
+        /// <summary>
+        /// Implementation of ISerializationCallbackReceiver. Sorts collections for deterministic ordering.
+        /// </summary>
+        public void OnBeforeSerialize()
+        {
+            m_ProfileEntryNames.Sort((a, b) => string.CompareOrdinal(a.Id, b.Id));
+        }
+
+        /// <summary>
+        /// Implementation of ISerializationCallbackReceiver. Does nothing.
+        /// </summary>
+        public void OnAfterDeserialize()
+        {
+        }
+
+        internal void SortProfiles()
+        {
+            BuildProfile defaultProfile = GetDefaultProfile();
+
+            if (m_Profiles.Count <= 1)
+                return;
+
+            List<BuildProfile> otherProfiles = m_Profiles.GetRange(1, m_Profiles.Count - 1);
+            otherProfiles.Sort((a, b) => string.CompareOrdinal(a.id, b.id));
+
+            for (int i = 1; i < m_Profiles.Count; i++)
+            {
+                m_Profiles[i] = otherProfiles[i - 1];
             }
         }
     }
